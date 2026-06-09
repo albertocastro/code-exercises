@@ -63,15 +63,18 @@ function pickExercise(startAt = 0): Promise<number> {
 }
 
 // ── Jest runner ────────────────────────────────────────────────────────────────
+interface AssertionResult {
+  status: "passed" | "failed" | "pending";
+  title: string;
+  failureMessages: string[];
+}
+
 interface JestResult {
   numFailedTests: number;
   numPassedTests: number;
   testResults: Array<{
-    testResults: Array<{
-      status: "passed" | "failed" | "pending";
-      title: string;
-      failureMessages: string[];
-    }>;
+    assertionResults?: AssertionResult[];
+    testResults?: AssertionResult[];
   }>;
 }
 
@@ -114,7 +117,7 @@ function renderResults(
   }
 
   const failing = result.testResults
-    .flatMap(s => s.testResults ?? [])
+    .flatMap(s => s.assertionResults ?? s.testResults ?? [])
     .filter(t => t?.status === "failed");
 
   if (result.numFailedTests === 0 && result.numPassedTests > 0) {
@@ -123,14 +126,16 @@ function renderResults(
     console.log(
       `  ${green(`✓ ${result.numPassedTests} passing`)}   ${red(`✗ ${result.numFailedTests} failing`)}\n`
     );
-    failing.slice(0, 5).forEach(t => {
+    failing.slice(0, 8).forEach(t => {
       console.log(red(`  ✗ ${t.title}`));
-      const hint = t.failureMessages[0]
-        ?.split("\n")
-        .find(l => /Expected|Received|expect\(/.test(l));
-      if (hint) console.log(dim(`    ${hint.trim()}`));
+      const lines = (t.failureMessages[0] ?? "")
+        .split("\n")
+        .map(l => l.trim())
+        .filter(l => l.length > 0 && !l.startsWith("at ") && !l.startsWith("●") && l !== "");
+      // Show up to 2 meaningful lines: error + expected/received
+      lines.slice(0, 2).forEach(l => console.log(dim(`    ${l}`)));
     });
-    if (failing.length > 5) console.log(dim(`\n  … and ${failing.length - 5} more`));
+    if (failing.length > 8) console.log(dim(`\n  … and ${failing.length - 8} more`));
     console.log();
   }
 
