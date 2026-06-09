@@ -114,8 +114,8 @@ function renderResults(
   }
 
   const failing = result.testResults
-    .flatMap(s => s.testResults)
-    .filter(t => t.status === "failed");
+    .flatMap(s => s.testResults ?? [])
+    .filter(t => t?.status === "failed");
 
   if (result.numFailedTests === 0 && result.numPassedTests > 0) {
     console.log(green(bold(`  ✓ ${result.numPassedTests} tests passing\n`)));
