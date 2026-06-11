@@ -18,7 +18,7 @@ const EXERCISES = [
   { id: "exercise_1", name: "Parking Garage",      levels: 4 },
   { id: "exercise_2", name: "Banking System",      levels: 4 },
   { id: "exercise_3", name: "Task Manager",        levels: 4 },
-  { id: "exercise_4", name: "Library System",      levels: 4 },
+  { id: "exercise_4", name: "Library System",      levels: 3 },
   { id: "exercise_5", name: "Online Store",        levels: 4 },
 ];
 

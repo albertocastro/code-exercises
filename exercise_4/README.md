@@ -1,7 +1,7 @@
 # Exercise 4 — Library System
 
-**Estimated time:** 30–40 minutes  
-**Levels:** 4
+**Estimated time:** 25–35 minutes  
+**Levels:** 3
 
 ## How to run
 
@@ -22,7 +22,7 @@ Implement a `Library` class.
 class Library {
   addBook(id: string, title: string, totalCopies: number): boolean  // false if id already exists
   checkout(bookId: string, userId: string): boolean                  // false if no available copies or book not found
-  returnBook(bookId: string, userId: string): boolean                // false if user doesn't have that book checked out
+  returnBook(bookId: string, userId: string): boolean                // false if user doesn't have that book checked out (signature evolves in Level 2 — see below)
   getAvailableCopies(bookId: string): number | null                 // null if book not found
   getBooksCheckedOutBy(userId: string): string[]                    // sorted bookIds currently held by userId
 }
@@ -37,7 +37,7 @@ class Library {
 | `checkout("b1", "bob")` | `true` |
 | `checkout("b1", "carol")` | `false` (no copies left) |
 | `getAvailableCopies("b1")` | `0` |
-| `returnBook("b1", "alice")` | `true` |
+| `returnBook("b1", "alice")` | not `false` (e.g. `null` once Level 2's signature applies) |
 | `getAvailableCopies("b1")` | `1` |
 
 ---
@@ -76,27 +76,10 @@ class Library {
 
 ---
 
-## Level 4 — Fines
-
-```ts
-class Library {
-  // returnBook now accepts returnTime and returns the fine
-  returnBook(bookId: string, userId: string, returnTime: number): number | false
-  // Fine = $0.50 per day overdue (ceil of partial days); 0 if returned on time
-  // Returns false if user didn't have the book
-
-  getUserFines(userId: string): number          // total accumulated unpaid fines
-  payFine(userId: string, amount: number): number  // pay towards fines; returns remaining unpaid balance
-  canCheckout(userId: string): boolean          // false if user has any unpaid fines
-}
-```
-
----
-
 ## Constraints
 
 - `totalCopies` is always ≥ 1
-- `dueDate` and `returnTime` are integers (ms timestamps)
-- `amount` for `payFine` is always positive
+- `dueDate` is an integer (ms timestamp)
 - A user can check out multiple copies of the same book (one per checkout call)
+- Waitlist auto-checkouts (Level 2's `returnBook` auto-assigning the next waiting user) do not have a due date and are therefore never overdue, regardless of Level 3 logic
 - Time limit: 6 seconds | Memory limit: 4 GB
