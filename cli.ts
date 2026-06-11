@@ -20,6 +20,7 @@ const EXERCISES = [
   { id: "exercise_3", name: "Task Manager",        levels: 4 },
   { id: "exercise_4", name: "Library System",      levels: 3 },
   { id: "exercise_5", name: "Online Store",        levels: 4 },
+  { id: "exercise_6", name: "Rate Limiter",        levels: 4 },
 ];
 
 // ── Arrow-key menu ─────────────────────────────────────────────────────────────
