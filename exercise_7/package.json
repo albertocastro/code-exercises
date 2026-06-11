@@ -1,0 +1,7 @@
+{
+  "name": "exercise_7",
+  "scripts": {
+    "test": "cd .. && jest exercise_7",
+    "watch": "cd .. && jest exercise_7 --watchAll"
+  }
+}
