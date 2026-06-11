@@ -24,6 +24,7 @@ const EXERCISES = [
   { id: "exercise_7", name: "LRU/LFU Cache",       levels: 4 },
   { id: "exercise_8", name: "Expression Evaluator",levels: 4 },
   { id: "exercise_9", name: "Task Scheduler",      levels: 4 },
+  { id: "exercise_10", name: "Event Bus",          levels: 4 },
 ];
 
 // ── Arrow-key menu ─────────────────────────────────────────────────────────────
