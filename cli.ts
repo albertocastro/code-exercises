@@ -22,6 +22,7 @@ const EXERCISES = [
   { id: "exercise_5", name: "Online Store",        levels: 4 },
   { id: "exercise_6", name: "Rate Limiter",        levels: 4 },
   { id: "exercise_7", name: "LRU/LFU Cache",       levels: 4 },
+  { id: "exercise_8", name: "Expression Evaluator",levels: 4 },
 ];
 
 // ── Arrow-key menu ─────────────────────────────────────────────────────────────
