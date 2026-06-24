@@ -121,6 +121,17 @@ function menu(
 // ── Live preview server (React only) ─────────────────────────────────────────
 interface Preview { url: string | null; stop: () => void; }
 
+function openBrowser(url: string) {
+  try {
+    if (process.platform === "win32") {
+      spawn("cmd", ["/c", "start", "", url], { stdio: "ignore", detached: true }).unref();
+    } else {
+      const cmd = process.platform === "darwin" ? "open" : "xdg-open";
+      spawn(cmd, [url], { stdio: "ignore", detached: true }).unref();
+    }
+  } catch { /* no browser available — the URL is still printed in the footer */ }
+}
+
 function startPreview(exerciseId: string): Preview {
   const handle: Preview = { url: null, stop: () => {} };
   const proc = spawn("npx", ["vite", "--clearScreen", "false"], {
@@ -130,7 +141,10 @@ function startPreview(exerciseId: string): Preview {
   });
   const scan = (buf: Buffer) => {
     const m = /(https?:\/\/localhost:\d+\/?)/.exec(buf.toString());
-    if (m && !handle.url) handle.url = m[1];
+    if (m && !handle.url) {
+      handle.url = m[1];
+      openBrowser(handle.url); // open the dev server as soon as it's ready
+    }
   };
   proc.stdout?.on("data", scan);
   proc.stderr?.on("data", scan);

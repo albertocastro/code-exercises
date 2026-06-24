@@ -26,8 +26,9 @@ then **enter** on an exercise to start it. The runner watches your solution file
 reruns the tests for the current level on every save, and unlocks the next level
 when it goes green. `←`/`esc` goes back to the list; `ctrl+c` quits.
 
-For React exercises the CLI also launches a dev server and prints a **live
-preview** URL so you can see your component in the browser as you build it.
+For React exercises the CLI also launches a dev server and **opens your browser**
+to a live preview, so you can see your component update as you build it. (The URL
+is also shown in the footer in case the browser doesn't open automatically.)
 
 ## Running tests directly
 
