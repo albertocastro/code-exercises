@@ -44,6 +44,7 @@ export function CodeEditor({
         automaticLayout: true,
         tabSize: 2,
         padding: { top: 12 },
+        "semanticHighlighting.enabled": true,
       }}
     />
   );
