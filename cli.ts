@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
@@ -12,8 +12,22 @@ const cyan   = (s: string) => `\x1b[36m${s}\x1b[0m`;
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-// ── Exercise registry ──────────────────────────────────────────────────────────
-const EXERCISES = [
+// ── Registry ─────────────────────────────────────────────────────────────────
+interface Exercise { id: string; name: string; levels: number; }
+
+interface Category {
+  id: string;
+  name: string;
+  exercises: Exercise[];
+  /** Absolute path to the file the learner edits (watched to rerun tests). */
+  solutionPath: (id: string) => string;
+  /** Full shell command that emits Jest-compatible JSON on stdout. */
+  testCommand: (id: string) => string;
+  /** React categories get a live browser preview. */
+  preview: boolean;
+}
+
+const LEETCODE: Exercise[] = [
   { id: "exercise_0", name: "Warm-up: Simple Sum", levels: 2 },
   { id: "exercise_1", name: "Parking Garage",      levels: 4 },
   { id: "exercise_2", name: "Banking System",      levels: 4 },
@@ -27,36 +41,73 @@ const EXERCISES = [
   { id: "exercise_10", name: "Event Bus",          levels: 4 },
 ];
 
+const REACT: Exercise[] = [
+  { id: "01_counter",       name: "Counter",         levels: 4 },
+  { id: "02_star_rating",   name: "Star Rating",     levels: 3 },
+  { id: "03_todo_list",     name: "Todo List",       levels: 4 },
+  { id: "04_search_filter", name: "Searchable List", levels: 3 },
+  { id: "05_tabs",          name: "Tabs",            levels: 3 },
+];
+
+const CATEGORIES: Category[] = [
+  {
+    id: "leetcode",
+    name: "LeetCode — TypeScript algorithms & design",
+    exercises: LEETCODE,
+    solutionPath: id => path.join(__dirname, id, "solution.ts"),
+    testCommand: id => `npx jest ${id} --json --forceExit --silent`,
+    preview: false,
+  },
+  {
+    id: "react",
+    name: "React — build components (RTL + live preview)",
+    exercises: REACT,
+    solutionPath: id => path.join(__dirname, "react", id, "solution.tsx"),
+    testCommand: id => `npx vitest run react/${id} --reporter=json --silent`,
+    preview: true,
+  },
+];
+
 // ── Arrow-key menu ─────────────────────────────────────────────────────────────
-function pickExercise(startAt = 0): Promise<number> {
+const BACK = Symbol("back");
+
+function menu(
+  title: string,
+  items: { id: string; name: string }[],
+  opts: { footer: string; allowBack: boolean }
+): Promise<number | typeof BACK> {
   return new Promise(resolve => {
-    let cursor = startAt;
+    let cursor = 0;
 
     readline.emitKeypressEvents(process.stdin);
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
 
     const draw = () => {
       console.clear();
-      console.log(bold("\n  code-exercises\n"));
-      EXERCISES.forEach((ex, i) => {
+      console.log(bold(`\n  ${title}\n`));
+      items.forEach((it, i) => {
         if (i === cursor) {
-          console.log(`  ${cyan("❯")} ${bold(ex.id)}  ${dim(ex.name)}`);
+          console.log(`  ${cyan("❯")} ${bold(it.id)}  ${dim(it.name)}`);
         } else {
-          console.log(`    ${dim(ex.id)}  ${dim(ex.name)}`);
+          console.log(`    ${dim(it.id)}  ${dim(it.name)}`);
         }
       });
-      console.log(dim("\n  ↑↓ navigate   enter select   ctrl+c quit\n"));
+      console.log(dim(`\n  ${opts.footer}\n`));
     };
 
     draw();
 
     const onKey = (_: string, key: readline.Key) => {
       if (key.ctrl && key.name === "c") process.exit(0);
-      if (key.name === "up")    cursor = Math.max(0, cursor - 1);
-      if (key.name === "down")  cursor = Math.min(EXERCISES.length - 1, cursor + 1);
+      if (key.name === "up")   cursor = Math.max(0, cursor - 1);
+      if (key.name === "down") cursor = Math.min(items.length - 1, cursor + 1);
+      if (opts.allowBack && (key.name === "left" || key.name === "escape" || key.name === "b")) {
+        process.stdin.removeListener("keypress", onKey);
+        resolve(BACK);
+        return;
+      }
       if (key.name === "return") {
-        process.stdin.setRawMode(false);
-        process.stdin.removeAllListeners("keypress");
+        process.stdin.removeListener("keypress", onKey);
         resolve(cursor);
         return;
       }
@@ -67,32 +118,45 @@ function pickExercise(startAt = 0): Promise<number> {
   });
 }
 
-// ── Jest runner ────────────────────────────────────────────────────────────────
+// ── Live preview server (React only) ─────────────────────────────────────────
+interface Preview { url: string | null; stop: () => void; }
+
+function startPreview(exerciseId: string): Preview {
+  const handle: Preview = { url: null, stop: () => {} };
+  const proc = spawn("npx", ["vite", "--clearScreen", "false"], {
+    cwd: __dirname,
+    env: { ...process.env, VITE_EXERCISE: exerciseId },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const scan = (buf: Buffer) => {
+    const m = /(https?:\/\/localhost:\d+\/?)/.exec(buf.toString());
+    if (m && !handle.url) handle.url = m[1];
+  };
+  proc.stdout?.on("data", scan);
+  proc.stderr?.on("data", scan);
+  handle.stop = () => { try { proc.kill(); } catch { /* already gone */ } };
+  return handle;
+}
+
+// ── Jest/Vitest result parsing ───────────────────────────────────────────────
 interface AssertionResult {
   status: "passed" | "failed" | "pending";
   title: string;
   failureMessages: string[];
 }
-
-interface JestResult {
+interface TestResult {
   numFailedTests: number;
   numPassedTests: number;
-  testResults: Array<{
-    assertionResults?: AssertionResult[];
-    testResults?: AssertionResult[];
-  }>;
+  testResults: Array<{ assertionResults?: AssertionResult[]; testResults?: AssertionResult[]; }>;
 }
 
-function runTests(exerciseId: string, level: number): JestResult | null {
+function runTests(cat: Category, ex: Exercise, level: number): TestResult | null {
   try {
-    const stdout = execSync(
-      `npx jest ${exerciseId} --json --forceExit --silent`,
-      {
-        encoding: "utf-8",
-        env: { ...process.env, LEVEL: String(level) },
-        stdio: ["pipe", "pipe", "pipe"],
-      }
-    );
+    const stdout = execSync(cat.testCommand(ex.id), {
+      encoding: "utf-8",
+      env: { ...process.env, LEVEL: String(level) },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     return JSON.parse(stdout);
   } catch (e: any) {
     try { return JSON.parse(e.stdout); } catch { return null; }
@@ -101,13 +165,13 @@ function runTests(exerciseId: string, level: number): JestResult | null {
 
 // ── UI ─────────────────────────────────────────────────────────────────────────
 function renderResults(
-  ex: (typeof EXERCISES)[number],
+  ex: Exercise,
   level: number,
-  result: JestResult | null
+  result: TestResult | null,
+  previewUrl: string | null
 ) {
   console.clear();
 
-  // Header
   console.log(bold(`\n  ${ex.id} — ${ex.name}`));
   const dots = Array.from({ length: ex.levels }, (_, i) => {
     if (i + 1 < level)  return green("●");
@@ -137,17 +201,17 @@ function renderResults(
         .split("\n")
         .map(l => l.trim())
         .filter(l => l.length > 0 && !l.startsWith("at ") && !l.startsWith("●") && l !== "");
-      // Show up to 2 meaningful lines: error + expected/received
       lines.slice(0, 2).forEach(l => console.log(dim(`    ${l}`)));
     });
     if (failing.length > 8) console.log(dim(`\n  … and ${failing.length - 8} more`));
     console.log();
   }
 
-  console.log(dim("  Watching solution.ts — save to rerun   ctrl+c to quit\n"));
+  if (previewUrl) console.log(cyan(`  ◆ live preview: ${previewUrl}\n`));
+  console.log(dim("  Watching solution — save to rerun   ctrl+c to quit\n"));
 }
 
-function renderSpinner(ex: (typeof EXERCISES)[number], level: number): NodeJS.Timeout {
+function renderSpinner(ex: Exercise): NodeJS.Timeout {
   const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
   let i = 0;
   console.clear();
@@ -159,21 +223,23 @@ function renderSpinner(ex: (typeof EXERCISES)[number], level: number): NodeJS.Ti
 
 // ── Watch loop ─────────────────────────────────────────────────────────────────
 function watchUntilPassed(
-  ex: (typeof EXERCISES)[number],
-  level: number
+  cat: Category,
+  ex: Exercise,
+  level: number,
+  preview: Preview | null
 ): Promise<void> {
   return new Promise(resolve => {
-    const solutionPath = path.join(__dirname, ex.id, "solution.ts");
+    const solutionPath = cat.solutionPath(ex.id);
     let watcher: fs.FSWatcher | null = null;
     let debounce: NodeJS.Timeout | null = null;
     let resolved = false;
 
     const check = () => {
-      const spinner = renderSpinner(ex, level);
-      const result = runTests(ex.id, level);
+      const spinner = renderSpinner(ex);
+      const result = runTests(cat, ex, level);
       clearInterval(spinner);
 
-      renderResults(ex, level, result);
+      renderResults(ex, level, result, preview?.url ?? null);
 
       if (result && result.numFailedTests === 0 && result.numPassedTests > 0) {
         resolved = true;
@@ -185,7 +251,6 @@ function watchUntilPassed(
     check();
     if (resolved) return;
 
-    // Watch the directory (more reliable on macOS with atomic saves)
     const dir = path.dirname(solutionPath);
     const filename = path.basename(solutionPath);
     watcher = fs.watch(dir, (_, changed) => {
@@ -196,13 +261,14 @@ function watchUntilPassed(
   });
 }
 
-// ── Main flow ──────────────────────────────────────────────────────────────────
-async function runFrom(exerciseIndex: number) {
-  for (let i = exerciseIndex; i < EXERCISES.length; i++) {
-    const ex = EXERCISES[i];
+// ── Run a category from a chosen exercise to the end ─────────────────────────
+async function runFrom(cat: Category, exerciseIndex: number) {
+  for (let i = exerciseIndex; i < cat.exercises.length; i++) {
+    const ex = cat.exercises[i];
+    const preview = cat.preview ? startPreview(ex.id) : null;
 
     for (let level = 1; level <= ex.levels; level++) {
-      await watchUntilPassed(ex, level);
+      await watchUntilPassed(cat, ex, level, preview);
 
       if (level < ex.levels) {
         console.log(green(bold(`\n  ✓ Level ${level} complete!`)));
@@ -211,22 +277,43 @@ async function runFrom(exerciseIndex: number) {
       }
     }
 
+    preview?.stop();
+
     console.clear();
     console.log(green(bold(`\n  ✓ ${ex.name} — all levels complete!\n`)));
 
-    if (i + 1 < EXERCISES.length) {
-      console.log(`  Next up: ${bold(EXERCISES[i + 1].id)} — ${EXERCISES[i + 1].name}\n`);
+    if (i + 1 < cat.exercises.length) {
+      console.log(`  Next up: ${bold(cat.exercises[i + 1].id)} — ${cat.exercises[i + 1].name}\n`);
       await sleep(2200);
     }
   }
 
   console.clear();
-  console.log(bold(green("\n  All exercises complete! 🎉\n")));
+  console.log(bold(green(`\n  ✓ ${cat.name} — category complete! 🎉\n`)));
+  await sleep(1600);
 }
 
+// ── Main flow ──────────────────────────────────────────────────────────────────
 async function main() {
-  const idx = await pickExercise();
-  await runFrom(idx);
+  while (true) {
+    const catChoice = await menu(
+      "code-exercises",
+      CATEGORIES.map(c => ({ id: c.id, name: c.name })),
+      { footer: "↑↓ navigate   enter select   ctrl+c quit", allowBack: false }
+    );
+    if (catChoice === BACK) continue;
+    const cat = CATEGORIES[catChoice];
+
+    while (true) {
+      const exChoice = await menu(
+        cat.name,
+        cat.exercises,
+        { footer: "↑↓ navigate   enter select   ←/esc back   ctrl+c quit", allowBack: true }
+      );
+      if (exChoice === BACK) break;
+      await runFrom(cat, exChoice);
+    }
+  }
 }
 
 main().catch(err => { console.error(err); process.exit(1); });
