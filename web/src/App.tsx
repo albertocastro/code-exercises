@@ -1,6 +1,9 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { CATALOG } from "../../catalog";
 import { loadExercise } from "./manifest";
+import { CodeEditor } from "./Editor";
+import { Markdown } from "./Markdown";
 
 type View =
   | { kind: "categories" }
@@ -63,6 +66,7 @@ export function App() {
 
   return (
     <Workspace
+      key={`${view.categoryId}/${view.exerciseId}`}
       view={view}
       onBack={(categoryId) => setView({ kind: "exercises", categoryId })}
       onLevel={(level) => setView({ ...view, level })}
@@ -85,46 +89,67 @@ function Workspace({
     () => loadExercise(view.categoryId, view.exerciseId),
     [view.categoryId, view.exerciseId]
   );
+  const [code, setCode] = useState(files.solutionCode);
 
   return (
-    <Shell onBack={() => onBack(view.categoryId)}>
-      <div className="ws-head">
-        <h1>
-          {ex.id} — {ex.name}
-        </h1>
-        <div className="dots">
-          {Array.from({ length: ex.levels }, (_, i) => i + 1).map((n) => (
+    <Shell fluid onBack={() => onBack(view.categoryId)}>
+      <div className="ws">
+        <div className="ws-head">
+          <h1>
+            {ex.id} — {ex.name}
+          </h1>
+          <div className="dots">
+            {Array.from({ length: ex.levels }, (_, i) => i + 1).map((n) => (
+              <button
+                key={n}
+                className={`dot ${n === view.level ? "active" : ""}`}
+                onClick={() => onLevel(n)}
+                title={`Level ${n}`}
+              >
+                {n}
+              </button>
+            ))}
             <button
-              key={n}
-              className={`dot ${n === view.level ? "active" : ""}`}
-              onClick={() => onLevel(n)}
-              title={`Level ${n}`}
+              className="reset"
+              title="Reset to starter code"
+              onClick={() => setCode(files.solutionCode)}
             >
-              {n}
+              reset
             </button>
-          ))}
+          </div>
         </div>
-      </div>
 
-      <div className="ws-grid">
-        <section className="pane">
-          <header>README</header>
-          <pre className="readme">{files.readme}</pre>
-        </section>
-        <section className="pane">
-          <header>{files.solutionPath}</header>
-          <pre className="code">{files.solutionCode}</pre>
-        </section>
+        <PanelGroup direction="horizontal" className="ws-panels" autoSaveId={`ws-${cat.id}`}>
+          <Panel defaultSize={38} minSize={18} className="panel">
+            <div className="panel-head">README</div>
+            <div className="panel-body scroll">
+              <Markdown source={files.readme} />
+            </div>
+          </Panel>
+
+          <PanelResizeHandle className="rhandle" />
+
+          <Panel minSize={30} className="panel">
+            <div className="panel-head mono">{files.solutionPath}</div>
+            <div className="panel-body">
+              <CodeEditor path={files.solutionPath} value={code} onChange={setCode} />
+            </div>
+          </Panel>
+        </PanelGroup>
       </div>
-      <p className="muted">
-        Phase 0–1 ✓ — navigation + file loading. Monaco editor, live preview, and
-        in-browser tests land in the next phases.
-      </p>
     </Shell>
   );
 }
 
-function Shell({ children, onBack }: { children: ReactNode; onBack?: () => void }) {
+function Shell({
+  children,
+  onBack,
+  fluid,
+}: {
+  children: ReactNode;
+  onBack?: () => void;
+  fluid?: boolean;
+}) {
   return (
     <div className="shell">
       <nav className="topbar">
@@ -136,7 +161,7 @@ function Shell({ children, onBack }: { children: ReactNode; onBack?: () => void 
           <span className="brand">⌁ web-ide</span>
         )}
       </nav>
-      <main className="content">{children}</main>
+      <main className={fluid ? "content-fluid" : "content"}>{children}</main>
     </div>
   );
 }
