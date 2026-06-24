@@ -12,6 +12,8 @@
 
 * { box-sizing: border-box; }
 
+html, body, #root { height: 100%; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -20,7 +22,7 @@ body {
   font-size: 14px;
 }
 
-.shell { min-height: 100vh; display: flex; flex-direction: column; }
+.shell { height: 100%; display: flex; flex-direction: column; }
 
 .topbar {
   height: 40px;
@@ -41,8 +43,8 @@ body {
 }
 .back:hover { background: var(--panel-2); }
 
-.content { padding: 28px 32px; max-width: 1100px; margin: 0 auto; width: 100%; }
-.content-fluid { flex: 1; min-height: 0; display: flex; }
+.content { padding: 28px 32px; max-width: 1100px; margin: 0 auto; width: 100%; flex: 1; min-height: 0; overflow: auto; }
+.content-fluid { flex: 1; min-height: 0; display: flex; overflow: hidden; }
 
 h1 { font-size: 20px; margin: 0 0 6px; }
 .muted { color: var(--muted); }
@@ -112,7 +114,7 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 .reset:hover { color: var(--text); border-color: var(--accent-2); }
 
 .ws-panels { flex: 1; min-height: 0; }
-.panel { display: flex; flex-direction: column; min-width: 0; }
+.panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
 .panel-head {
   padding: 7px 12px;
   background: var(--panel-2);
@@ -121,7 +123,7 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   color: var(--muted);
 }
 .panel-head.mono { font-family: ui-monospace, monospace; }
-.panel-body { flex: 1; min-height: 0; background: var(--panel); }
+.panel-body { flex: 1; min-height: 0; overflow: hidden; background: var(--panel); }
 .panel-body.scroll { overflow: auto; padding: 4px 20px 28px; }
 
 .rhandle {
