@@ -132,6 +132,12 @@ function openBrowser(url: string) {
   } catch { /* no browser available — the URL is still printed in the footer */ }
 }
 
+function openEditor(dir: string) {
+  try {
+    spawn("code", [dir], { stdio: "ignore", detached: true }).unref();
+  } catch { /* the `code` CLI isn't on PATH — skip silently */ }
+}
+
 function startPreview(exerciseId: string): Preview {
   const handle: Preview = { url: null, stop: () => {} };
   const proc = spawn("npx", ["vite", "--clearScreen", "false"], {
@@ -276,10 +282,16 @@ function watchUntilPassed(
 }
 
 // ── Run a category from a chosen exercise to the end ─────────────────────────
-async function runFrom(cat: Category, exerciseIndex: number) {
+interface RunOptions { openVSCode: boolean; openBrowser: boolean; }
+
+async function runFrom(cat: Category, exerciseIndex: number, opts: RunOptions) {
+  if (opts.openVSCode) {
+    openEditor(path.dirname(cat.solutionPath(cat.exercises[exerciseIndex].id)));
+  }
+
   for (let i = exerciseIndex; i < cat.exercises.length; i++) {
     const ex = cat.exercises[i];
-    const preview = cat.preview ? startPreview(ex.id) : null;
+    const preview = cat.preview && opts.openBrowser ? startPreview(ex.id) : null;
 
     for (let level = 1; level <= ex.levels; level++) {
       await watchUntilPassed(cat, ex, level, preview);
@@ -325,7 +337,29 @@ async function main() {
         { footer: "↑↓ navigate   enter select   ←/esc back   ctrl+c quit", allowBack: true }
       );
       if (exChoice === BACK) break;
-      await runFrom(cat, exChoice);
+
+      // Prestep: choose what to open before the exercise starts.
+      const preItems = cat.preview
+        ? [
+            { id: "both",    name: "Open browser + VS Code in this exercise" },
+            { id: "browser", name: "Open browser only" },
+            { id: "none",    name: "Just run tests (open nothing)" },
+          ]
+        : [
+            { id: "vscode",  name: "Open VS Code in this exercise" },
+            { id: "none",    name: "Just run tests (open nothing)" },
+          ];
+      const pre = await menu(
+        `${cat.exercises[exChoice].name} — before we start`,
+        preItems,
+        { footer: "↑↓ navigate   enter select   ←/esc back   ctrl+c quit", allowBack: true }
+      );
+      if (pre === BACK) continue;
+
+      const opts: RunOptions = cat.preview
+        ? { openVSCode: pre === 0, openBrowser: pre === 0 || pre === 1 }
+        : { openVSCode: pre === 0, openBrowser: false };
+      await runFrom(cat, exChoice, opts);
     }
   }
 }

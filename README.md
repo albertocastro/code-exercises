@@ -22,13 +22,19 @@ npm start
 ```
 
 You'll see the two categories. Hit **enter** on one to open its exercise list,
-then **enter** on an exercise to start it. The runner watches your solution file,
-reruns the tests for the current level on every save, and unlocks the next level
-when it goes green. `←`/`esc` goes back to the list; `ctrl+c` quits.
+then **enter** on an exercise. A quick prestep asks what to open before it starts:
 
-For React exercises the CLI also launches a dev server and **opens your browser**
-to a live preview, so you can see your component update as you build it. (The URL
-is also shown in the footer in case the browser doesn't open automatically.)
+- **React:** browser + VS Code · browser only · nothing
+- **LeetCode:** VS Code · nothing
+
+Then the runner watches your solution file, reruns the tests for the current
+level on every save, and unlocks the next level when it goes green. `←`/`esc`
+goes back; `ctrl+c` quits.
+
+When you opt in, the CLI opens VS Code at the exercise directory, and (for React)
+launches a dev server and **opens your browser** to a live preview so you can see
+your component update as you build it. The preview URL is also shown in the
+footer in case the browser doesn't open automatically.
 
 ## Running tests directly
 
