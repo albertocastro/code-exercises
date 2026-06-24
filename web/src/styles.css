@@ -114,7 +114,8 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 .reset:hover { color: var(--text); border-color: var(--accent-2); }
 
 .ws-panels { flex: 1; min-height: 0; }
-.panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
+.results-group { flex: 1; min-height: 0; }
+.panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .panel-head {
   padding: 7px 12px;
   background: var(--panel-2);
@@ -132,7 +133,23 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   cursor: col-resize;
   transition: background 0.15s;
 }
+.rhandle.vertical { width: auto; height: 6px; cursor: row-resize; }
 .rhandle:hover, .rhandle[data-resize-handle-active] { background: var(--accent-2); }
+
+.panel-head.tabs { display: flex; gap: 4px; padding: 4px 6px; }
+.tab {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.tab:hover { color: var(--text); }
+.tab.active { background: var(--panel); color: var(--accent); }
+.fill { height: 100%; }
+.panel-body > .fill + .fill { /* stacked tab panes share the body */ }
 
 /* ── Markdown ── */
 .markdown { line-height: 1.6; color: var(--text); }

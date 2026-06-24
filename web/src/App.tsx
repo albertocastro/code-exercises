@@ -1,9 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { CATALOG } from "../../catalog";
 import { loadExercise } from "./manifest";
-import { CodeEditor } from "./Editor";
-import { Markdown } from "./Markdown";
+import { Workspace } from "./Workspace";
 
 type View =
   | { kind: "categories" }
@@ -64,79 +62,41 @@ export function App() {
     );
   }
 
-  return (
-    <Workspace
-      key={`${view.categoryId}/${view.exerciseId}`}
-      view={view}
-      onBack={(categoryId) => setView({ kind: "exercises", categoryId })}
-      onLevel={(level) => setView({ ...view, level })}
-    />
-  );
+  return <WorkspaceView view={view} setView={setView} />;
 }
 
-function Workspace({
+function WorkspaceView({
   view,
-  onBack,
-  onLevel,
+  setView,
 }: {
   view: { categoryId: string; exerciseId: string; level: number };
-  onBack: (categoryId: string) => void;
-  onLevel: (level: number) => void;
+  setView: (v: View) => void;
 }) {
   const cat = CATALOG.find((c) => c.id === view.categoryId)!;
   const ex = cat.exercises.find((e) => e.id === view.exerciseId)!;
+  // Stable per-exercise identity so Sandpack isn't reinitialised on level change.
   const files = useMemo(
     () => loadExercise(view.categoryId, view.exerciseId),
     [view.categoryId, view.exerciseId]
   );
-  const [code, setCode] = useState(files.solutionCode);
 
   return (
-    <Shell fluid onBack={() => onBack(view.categoryId)}>
-      <div className="ws">
-        <div className="ws-head">
-          <h1>
-            {ex.id} — {ex.name}
-          </h1>
-          <div className="dots">
-            {Array.from({ length: ex.levels }, (_, i) => i + 1).map((n) => (
-              <button
-                key={n}
-                className={`dot ${n === view.level ? "active" : ""}`}
-                onClick={() => onLevel(n)}
-                title={`Level ${n}`}
-              >
-                {n}
-              </button>
-            ))}
-            <button
-              className="reset"
-              title="Reset to starter code"
-              onClick={() => setCode(files.solutionCode)}
-            >
-              reset
-            </button>
-          </div>
-        </div>
-
-        <PanelGroup direction="horizontal" className="ws-panels" autoSaveId={`ws-${cat.id}`}>
-          <Panel defaultSize={38} minSize={18} className="panel">
-            <div className="panel-head">README</div>
-            <div className="panel-body scroll">
-              <Markdown source={files.readme} />
-            </div>
-          </Panel>
-
-          <PanelResizeHandle className="rhandle" />
-
-          <Panel minSize={30} className="panel">
-            <div className="panel-head mono">{files.solutionPath}</div>
-            <div className="panel-body">
-              <CodeEditor path={files.solutionPath} value={code} onChange={setCode} />
-            </div>
-          </Panel>
-        </PanelGroup>
-      </div>
+    <Shell fluid onBack={() => setView({ kind: "exercises", categoryId: view.categoryId })}>
+      <Workspace
+        key={`${view.categoryId}/${view.exerciseId}`}
+        categoryId={view.categoryId}
+        exercise={ex}
+        files={files}
+        level={view.level}
+        onLevel={(level) =>
+          setView({
+            kind: "workspace",
+            categoryId: view.categoryId,
+            exerciseId: view.exerciseId,
+            level,
+          })
+        }
+      />
     </Shell>
   );
 }
