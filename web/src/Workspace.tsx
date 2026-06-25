@@ -8,6 +8,8 @@ import { TestPanel } from "./TestPanel";
 import { PreviewPanel } from "./PreviewPanel";
 import { ConsolePanel } from "./ConsolePanel";
 import { Explorer, type FileEntry } from "./Explorer";
+import { InsightsPanel } from "./InsightsPanel";
+import { celebrate } from "./confetti";
 import { getDraft, saveDraft, clearDraft } from "./drafts";
 import {
   getExercise,
@@ -53,6 +55,7 @@ export function Workspace({
   const [prog, setProg] = useState<ExerciseProgress>(() => getExercise(key));
   const [green, setGreen] = useState(false);
   const [hint, setHint] = useState<ComplexityResult | null>(null);
+  const [insightsLevel, setInsightsLevel] = useState<number | null>(null);
   const [layout, setLayout] = useState<Layout>(
     () => (localStorage.getItem(LAYOUT_KEY) as Layout) || "split"
   );
@@ -71,6 +74,7 @@ export function Workspace({
   useEffect(() => {
     setGreen(false);
     setConsoleEntries([]);
+    setInsightsLevel(null);
     timer.setElapsed(0);
     if (submitted) timer.stop();
     else timer.start();
@@ -131,10 +135,12 @@ export function Workspace({
     }
   };
   const onConsole: ConsoleSink = (entry) => {
-    setConsoleEntries((prev) => [
-      ...prev,
-      { ...entry, id: nextConsoleId.current++ },
-    ]);
+    // Cap entries: a solution that logs during render would otherwise drive an
+    // unbounded re-render loop (logging spam) and freeze the IDE. Returning the
+    // same array once full makes React bail out and breaks the cycle.
+    setConsoleEntries((prev) =>
+      prev.length >= 500 ? prev : [...prev, { ...entry, id: nextConsoleId.current++ }]
+    );
   };
 
   const submit = () => {
@@ -148,7 +154,9 @@ export function Workspace({
       }
     }
     setProg(submitLevel(key, level, timer.elapsed, exercise.levels, extra));
-    if (level < exercise.levels) onLevel(level + 1);
+    // Don't auto-advance: celebrate and open the insights panel instead.
+    celebrate(level === exercise.levels);
+    setInsightsLevel(level);
   };
 
   // ── reusable panel bodies ──
@@ -421,6 +429,25 @@ export function Workspace({
       )}
         </div>
       </div>
+
+      {insightsLevel !== null && (
+        <InsightsPanel
+          categoryId={categoryId}
+          exerciseId={exercise.id}
+          level={insightsLevel}
+          totalLevels={exercise.levels}
+          solutionCode={code}
+          readme={files.readme}
+          stat={prog.levels[insightsLevel]}
+          complete={prog.unlockedLevel > exercise.levels}
+          onNext={() => {
+            const next = insightsLevel + 1;
+            setInsightsLevel(null);
+            if (next <= exercise.levels) onLevel(next);
+          }}
+          onClose={() => setInsightsLevel(null)}
+        />
+      )}
     </div>
   );
 }
