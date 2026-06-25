@@ -1,4 +1,5 @@
 import MonacoEditor, { type Monaco } from "@monaco-editor/react";
+import { installHighlighting } from "./monaco-setup";
 
 export function CodeEditor({
   path,
@@ -25,6 +26,10 @@ export function CodeEditor({
       noSemanticValidation: true,
       noSyntaxValidation: false,
     });
+    // Apply Shiki TextMate highlighting (VS Code grammars) for real JSX colors.
+    installHighlighting(monaco)
+      .then(() => monaco.editor.setTheme("dark-plus"))
+      .catch(() => {});
   };
 
   return (

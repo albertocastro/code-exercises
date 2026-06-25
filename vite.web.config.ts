@@ -18,6 +18,8 @@ export default defineConfig({
       "@testing-library/react",
       "@testing-library/user-event",
       "sucrase",
+      "shiki",
+      "@shikijs/monaco",
     ],
     // Monaco ships its own ESM + workers; pre-bundling its huge TS language
     // service breaks dev. Serve it as native ESM instead.

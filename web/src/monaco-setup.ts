@@ -22,3 +22,28 @@ self.MonacoEnvironment = {
 
 // Point @monaco-editor/react at the bundled instance (no network loader).
 loader.config({ monaco });
+
+// Swap Monaco's tokenizer for Shiki (VS Code's TextMate grammars) so .tsx gets
+// real JSX highlighting. We alias `typescript` to the `tsx` grammar so every
+// model keeps the TypeScript language service (IntelliSense) while gaining
+// JSX-aware colors. Loaded once, lazily.
+type MonacoNS = typeof monaco;
+let shikiPromise: Promise<void> | null = null;
+
+export function installHighlighting(m: MonacoNS): Promise<void> {
+  if (!shikiPromise) {
+    shikiPromise = (async () => {
+      const [{ createHighlighter }, { shikiToMonaco }] = await Promise.all([
+        import("shiki"),
+        import("@shikijs/monaco"),
+      ]);
+      const highlighter = await createHighlighter({
+        themes: ["dark-plus"],
+        langs: ["tsx", "javascript", "json"],
+        langAlias: { typescript: "tsx" },
+      });
+      shikiToMonaco(highlighter, m);
+    })();
+  }
+  return shikiPromise;
+}
