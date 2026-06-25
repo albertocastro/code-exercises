@@ -7,6 +7,8 @@ export interface LevelStat {
   timeMs: number; // time spent (recorded on submit)
   passedAt?: number; // first time tests went green
   submittedAt?: number; // when the learner submitted (gates the next level)
+  optimal?: boolean; // Tier-1 complexity verdict (if the exercise has perf.ts)
+  complexity?: string; // measured complexity guess
 }
 export interface ExerciseProgress {
   unlockedLevel: number;
@@ -56,13 +58,16 @@ export function submitLevel(
   key: string,
   level: number,
   timeMs: number,
-  totalLevels: number
+  totalLevels: number,
+  extra?: { optimal?: boolean; complexity?: string }
 ): ExerciseProgress {
   const store = load();
   const ex = (store[key] ??= blank());
   const stat = ensure(ex, level);
   stat.submittedAt = Date.now();
   stat.timeMs = timeMs;
+  if (extra?.optimal !== undefined) stat.optimal = extra.optimal;
+  if (extra?.complexity) stat.complexity = extra.complexity;
   ex.unlockedLevel = Math.max(ex.unlockedLevel, Math.min(level + 1, totalLevels + 1));
   save(store);
   return ex;

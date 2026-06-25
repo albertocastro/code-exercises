@@ -15,7 +15,32 @@ moving on.
 npm install   # run once from this folder
 ```
 
-## The CLI (recommended)
+## The Web IDE
+
+A self-contained, browser-based IDE (GreatFrontend-style) — no cloud, runs
+entirely on your machine:
+
+```bash
+npm run web          # dev server at http://localhost:5180
+npm run web:build    # static production build into dist-web/
+```
+
+- **Monaco** editor (bundled locally — works offline / behind content blockers).
+- **In-browser runner**: your code is transpiled with Sucrase and the tests run
+  locally against React Testing Library — no CodeSandbox, no network. Live
+  component **preview** for React exercises.
+- **Levels & Submit**: tests going green enables **Submit**, which records the
+  level and unlocks the next; higher levels stay 🔒 until you submit the prior
+  one. Per-level **timer** auto-stops when you pass.
+- **Layouts**: toggle between *Split* and *Columns* (README · code+tests ·
+  preview); the choice is remembered.
+- **Tier-1 complexity check**: an exercise may ship a hidden `perf.ts`; on submit
+  the runner op-counts the solution at increasing sizes and flags it as
+  *Optimal* or *could be faster* (e.g. O(n²) when O(n) is expected).
+- **Insights**: levels completed, time, and runs per exercise, with JSON export.
+  All progress/metrics persist in `localStorage`.
+
+## The CLI
 
 ```bash
 npm start

@@ -14,7 +14,11 @@ import {
   type ExerciseProgress,
 } from "./progress";
 import { useTimer, fmtTime } from "./useTimer";
+import { runComplexity, type ComplexityResult } from "./runner/complexity";
 import type { RunResult } from "./runner/testRunner";
+
+type Layout = "split" | "columns";
+const LAYOUT_KEY = "code-exercises-layout";
 
 export function Workspace({
   categoryId,
@@ -29,19 +33,23 @@ export function Workspace({
   level: number;
   onLevel: (level: number) => void;
 }) {
-  const hasPreview = categoryId === "react";
+  const hasPreview = categoryId === "react" && !!files.previewCode;
   const key = `${categoryId}/${exercise.id}`;
   const [code, setCode] = useState(files.solutionCode);
   const [tab, setTab] = useState<"tests" | "preview">(hasPreview ? "preview" : "tests");
   const [prog, setProg] = useState<ExerciseProgress>(() => getExercise(key));
   const [green, setGreen] = useState(false);
+  const [hint, setHint] = useState<ComplexityResult | null>(null);
+  const [layout, setLayout] = useState<Layout>(
+    () => (localStorage.getItem(LAYOUT_KEY) as Layout) || "split"
+  );
   const timer = useTimer();
 
   const submitted = !!prog.levels[level]?.submittedAt;
   const unlocked = prog.unlockedLevel;
   const canSubmit = green && !submitted;
+  const complete = prog.unlockedLevel > exercise.levels;
 
-  // Reset timer + green state on level change; auto-run the clock on a fresh level.
   useEffect(() => {
     setGreen(false);
     timer.setElapsed(0);
@@ -50,20 +58,64 @@ export function Workspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [level, exercise.id]);
 
+  // Editing invalidates the last complexity verdict.
+  const editCode = (next: string) => {
+    setCode(next);
+    setHint(null);
+  };
+
+  const chooseLayout = (l: Layout) => {
+    setLayout(l);
+    localStorage.setItem(LAYOUT_KEY, l);
+  };
+
   const onResult = (r: RunResult) => {
     setProg(recordAttempt(key, level));
     const isGreen = r.failed === 0 && r.passed > 0 && !r.compileError;
     setGreen(isGreen);
     if (isGreen) {
-      timer.stop(); // auto-stop on pass
+      timer.stop();
       setProg(markPassed(key, level));
     }
   };
 
   const submit = () => {
-    setProg(submitLevel(key, level, timer.elapsed, exercise.levels));
+    // Tier-1 complexity check (if the exercise ships perf.ts).
+    let extra: { optimal?: boolean; complexity?: string } | undefined;
+    if (files.perfCode) {
+      const c = runComplexity(files.perfCode, code);
+      if (c.ran) {
+        setHint(c);
+        extra = { optimal: c.optimal, complexity: c.measured };
+      }
+    }
+    setProg(submitLevel(key, level, timer.elapsed, exercise.levels, extra));
     if (level < exercise.levels) onLevel(level + 1);
   };
+
+  // ── reusable panel bodies ──
+  const readmeBody = (
+    <>
+      <div className="panel-head">README</div>
+      <div className="panel-body scroll">
+        <Markdown source={files.readme} />
+      </div>
+    </>
+  );
+  const editorBody = (
+    <>
+      <div className="panel-head mono">{files.solutionPath}</div>
+      <div className="panel-body">
+        <CodeEditor path={files.solutionPath} value={code} onChange={editCode} />
+      </div>
+    </>
+  );
+  const testsContent = (
+    <TestPanel testCode={files.testCode} solutionCode={code} level={level} onResult={onResult} />
+  );
+  const previewContent = files.previewCode ? (
+    <PreviewPanel previewCode={files.previewCode} solutionCode={code} />
+  ) : null;
 
   return (
     <div className="ws">
@@ -73,6 +125,23 @@ export function Workspace({
         </h1>
 
         <div className="ws-controls">
+          <div className="layout-switch" title="Layout">
+            <button
+              className={`lbtn ${layout === "split" ? "active" : ""}`}
+              onClick={() => chooseLayout("split")}
+              title="Split"
+            >
+              ▣
+            </button>
+            <button
+              className={`lbtn ${layout === "columns" ? "active" : ""}`}
+              onClick={() => chooseLayout("columns")}
+              title="Columns: README | code+tests | preview"
+            >
+              ☰
+            </button>
+          </div>
+
           <div className={`timer ${timer.running ? "running" : ""}`}>
             <span className="time">{fmtTime(timer.elapsed)}</span>
             <button
@@ -106,13 +175,7 @@ export function Workspace({
             className={`submit ${canSubmit ? "ready" : ""}`}
             disabled={!canSubmit}
             onClick={submit}
-            title={
-              submitted
-                ? "Already submitted"
-                : green
-                  ? "Submit to unlock the next level"
-                  : "Pass all tests to submit"
-            }
+            title={submitted ? "Already submitted" : green ? "Submit to unlock the next level" : "Pass all tests to submit"}
           >
             {submitted ? "Submitted ✓" : "Submit"}
           </button>
@@ -123,65 +186,102 @@ export function Workspace({
         </div>
       </div>
 
-      <PanelGroup direction="horizontal" className="ws-panels" autoSaveId={`ws-${categoryId}`}>
-        <Panel defaultSize={32} minSize={16} className="panel">
-          <div className="panel-head">README</div>
-          <div className="panel-body scroll">
-            <Markdown source={files.readme} />
-          </div>
-        </Panel>
+      {(hint || complete) && (
+        <div className="banner-row">
+          {complete && <span className="banner done">🎉 All {exercise.levels} levels complete!</span>}
+          {hint &&
+            (hint.optimal ? (
+              <span className="banner ok">✓ Optimal — {hint.expected}</span>
+            ) : (
+              <span className="banner warn">
+                ⚠ Correct, but this looks ~{hint.measured}. Aim for {hint.expected}.
+              </span>
+            ))}
+        </div>
+      )}
 
-        <PanelResizeHandle className="rhandle" />
-
-        <Panel minSize={30} className="panel">
-          <PanelGroup direction="vertical" className="results-group">
-            <Panel defaultSize={60} minSize={20} className="panel">
-              <div className="panel-head mono">{files.solutionPath}</div>
-              <div className="panel-body">
-                <CodeEditor path={files.solutionPath} value={code} onChange={setCode} />
-              </div>
-            </Panel>
-
-            <PanelResizeHandle className="rhandle vertical" />
-
-            <Panel minSize={15} className="panel">
-              <div className="panel-head tabs">
-                {hasPreview && (
-                  <button
-                    className={`tab ${tab === "preview" ? "active" : ""}`}
-                    onClick={() => setTab("preview")}
-                  >
-                    Preview
+      {layout === "split" ? (
+        <PanelGroup direction="horizontal" className="ws-panels" autoSaveId={`ws-${categoryId}-split`}>
+          <Panel defaultSize={32} minSize={16} className="panel">
+            {readmeBody}
+          </Panel>
+          <PanelResizeHandle className="rhandle" />
+          <Panel minSize={30} className="panel">
+            <PanelGroup direction="vertical" className="results-group">
+              <Panel defaultSize={60} minSize={20} className="panel">
+                {editorBody}
+              </Panel>
+              <PanelResizeHandle className="rhandle vertical" />
+              <Panel minSize={15} className="panel">
+                <div className="panel-head tabs">
+                  {hasPreview && (
+                    <button className={`tab ${tab === "preview" ? "active" : ""}`} onClick={() => setTab("preview")}>
+                      Preview
+                    </button>
+                  )}
+                  <button className={`tab ${tab === "tests" ? "active" : ""}`} onClick={() => setTab("tests")}>
+                    Tests
                   </button>
-                )}
-                <button
-                  className={`tab ${tab === "tests" ? "active" : ""}`}
-                  onClick={() => setTab("tests")}
-                >
-                  Tests
-                </button>
-              </div>
-              <div className="panel-body">
-                {hasPreview && (
-                  <div className="fill scroll" style={{ display: tab === "preview" ? "block" : "none" }}>
-                    {files.previewCode && (
-                      <PreviewPanel previewCode={files.previewCode} solutionCode={code} />
-                    )}
-                  </div>
-                )}
-                <div className="fill scroll" style={{ display: tab === "tests" ? "block" : "none" }}>
-                  <TestPanel
-                    testCode={files.testCode}
-                    solutionCode={code}
-                    level={level}
-                    onResult={onResult}
-                  />
                 </div>
-              </div>
-            </Panel>
-          </PanelGroup>
-        </Panel>
-      </PanelGroup>
+                <div className="panel-body">
+                  {hasPreview && (
+                    <div className="fill scroll" style={{ display: tab === "preview" ? "block" : "none" }}>
+                      {previewContent}
+                    </div>
+                  )}
+                  <div className="fill scroll" style={{ display: tab === "tests" ? "block" : "none" }}>
+                    {testsContent}
+                  </div>
+                </div>
+              </Panel>
+            </PanelGroup>
+          </Panel>
+        </PanelGroup>
+      ) : (
+        // columns: README | (code over tests) | preview   [leetcode: README | code | tests]
+        <PanelGroup direction="horizontal" className="ws-panels" autoSaveId={`ws-${categoryId}-columns`}>
+          <Panel defaultSize={26} minSize={14} className="panel">
+            {readmeBody}
+          </Panel>
+          <PanelResizeHandle className="rhandle" />
+          <Panel minSize={22} className="panel">
+            {hasPreview ? (
+              <PanelGroup direction="vertical" className="results-group">
+                <Panel defaultSize={62} minSize={20} className="panel">
+                  {editorBody}
+                </Panel>
+                <PanelResizeHandle className="rhandle vertical" />
+                <Panel minSize={18} className="panel">
+                  <div className="panel-head">Tests</div>
+                  <div className="panel-body">
+                    <div className="fill scroll">{testsContent}</div>
+                  </div>
+                </Panel>
+              </PanelGroup>
+            ) : (
+              editorBody
+            )}
+          </Panel>
+          <PanelResizeHandle className="rhandle" />
+          <Panel defaultSize={hasPreview ? 30 : 34} minSize={18} className="panel">
+            {hasPreview ? (
+              <>
+                <div className="panel-head">Preview</div>
+                <div className="panel-body">
+                  <div className="fill scroll">{previewContent}</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="panel-head">Tests</div>
+                <div className="panel-body">
+                  <div className="fill scroll">{testsContent}</div>
+                </div>
+              </>
+            )}
+          </Panel>
+        </PanelGroup>
+      )}
     </div>
   );
 }

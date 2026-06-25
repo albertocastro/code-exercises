@@ -115,6 +115,24 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 
 .ws-controls { display: flex; align-items: center; gap: 14px; }
 
+.layout-switch { display: flex; gap: 2px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.lbtn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 4px 9px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.lbtn:hover { color: var(--text); }
+.lbtn.active { background: var(--panel-2); color: var(--accent); }
+
+.banner-row { display: flex; gap: 10px; padding: 8px 18px; border-bottom: 1px solid var(--border); }
+.banner { font-size: 12.5px; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border); }
+.banner.ok { color: var(--green); border-color: var(--green); }
+.banner.warn { color: #e2c08d; border-color: #5a4a2a; background: #2a2418; }
+.banner.done { color: var(--accent); border-color: var(--accent-2); }
+
 .timer { display: flex; align-items: center; gap: 6px; }
 .timer .time {
   font-variant-numeric: tabular-nums;

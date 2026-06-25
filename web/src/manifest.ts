@@ -26,6 +26,7 @@ export interface ExerciseFiles {
   testCode: string;
   previewPath?: string;
   previewCode?: string;
+  perfCode?: string; // optional Tier-1 complexity spec (perf.ts)
 }
 
 export function loadExercise(categoryId: string, exerciseId: string): ExerciseFiles {
@@ -48,5 +49,6 @@ export function loadExercise(categoryId: string, exerciseId: string): ExerciseFi
     solutionCode: get(`${base}solution.ts`) ?? "",
     testPath: "/solution.test.ts",
     testCode: get(`${base}solution.test.ts`) ?? "",
+    perfCode: get(`${base}perf.ts`),
   };
 }
