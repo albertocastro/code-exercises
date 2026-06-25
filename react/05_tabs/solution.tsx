@@ -30,15 +30,15 @@ export function Tabs({ tabs, defaultIndex = 0 }: TabsProps) {
   };
 
   return (
-    <div>
-      <div onKeyDown={onKeyDown}>
+    <div className="exercise-tabs">
+      <div className="exercise-tablist" onKeyDown={onKeyDown}>
         {tabs.map((t, i) => (
-          <button key={i} onClick={() => setActive(i)}>
+          <button className="exercise-tab" key={i} onClick={() => setActive(i)}>
             {t.label}
           </button>
         ))}
       </div>
-      <div>{tabs[active].content}</div>
+      <div className="exercise-panel">{tabs[active].content}</div>
     </div>
   );
 }

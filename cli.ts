@@ -2,6 +2,7 @@ import { execSync, spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
+import { CATALOG, CategoryMeta, ExerciseMeta } from "./catalog";
 
 // ── ANSI helpers ───────────────────────────────────────────────────────────────
 const green  = (s: string) => `\x1b[32m${s}\x1b[0m`;
@@ -13,60 +14,30 @@ const cyan   = (s: string) => `\x1b[36m${s}\x1b[0m`;
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 // ── Registry ─────────────────────────────────────────────────────────────────
-interface Exercise { id: string; name: string; levels: number; }
+// Exercise/category metadata lives in catalog.ts (shared with the web IDE).
+// Here we attach the Node-only runner behaviour for each category.
+type Exercise = ExerciseMeta;
 
-interface Category {
-  id: string;
-  name: string;
-  exercises: Exercise[];
+interface Category extends CategoryMeta {
   /** Absolute path to the file the learner edits (watched to rerun tests). */
   solutionPath: (id: string) => string;
   /** Full shell command that emits Jest-compatible JSON on stdout. */
   testCommand: (id: string) => string;
-  /** React categories get a live browser preview. */
-  preview: boolean;
 }
 
-const LEETCODE: Exercise[] = [
-  { id: "exercise_0", name: "Warm-up: Simple Sum", levels: 2 },
-  { id: "exercise_1", name: "Parking Garage",      levels: 4 },
-  { id: "exercise_2", name: "Banking System",      levels: 4 },
-  { id: "exercise_3", name: "Task Manager",        levels: 4 },
-  { id: "exercise_4", name: "Library System",      levels: 3 },
-  { id: "exercise_5", name: "Online Store",        levels: 4 },
-  { id: "exercise_6", name: "Rate Limiter",        levels: 4 },
-  { id: "exercise_7", name: "LRU/LFU Cache",       levels: 4 },
-  { id: "exercise_8", name: "Expression Evaluator",levels: 4 },
-  { id: "exercise_9", name: "Task Scheduler",      levels: 4 },
-  { id: "exercise_10", name: "Event Bus",          levels: 4 },
-];
-
-const REACT: Exercise[] = [
-  { id: "01_counter",       name: "Counter",         levels: 4 },
-  { id: "02_star_rating",   name: "Star Rating",     levels: 3 },
-  { id: "03_todo_list",     name: "Todo List",       levels: 4 },
-  { id: "04_search_filter", name: "Searchable List", levels: 3 },
-  { id: "05_tabs",          name: "Tabs",            levels: 3 },
-];
-
-const CATEGORIES: Category[] = [
-  {
-    id: "leetcode",
-    name: "LeetCode — TypeScript algorithms & design",
-    exercises: LEETCODE,
-    solutionPath: id => path.join(__dirname, id, "solution.ts"),
-    testCommand: id => `npx jest ${id} --json --forceExit --silent`,
-    preview: false,
-  },
-  {
-    id: "react",
-    name: "React — build components (RTL + live preview)",
-    exercises: REACT,
-    solutionPath: id => path.join(__dirname, "react", id, "solution.tsx"),
-    testCommand: id => `npx vitest run react/${id} --reporter=json --silent`,
-    preview: true,
-  },
-];
+const CATEGORIES: Category[] = CATALOG.map(meta =>
+  meta.runner === "jest"
+    ? {
+        ...meta,
+        solutionPath: id => path.join(__dirname, id, "solution.ts"),
+        testCommand: id => `npx jest ${id} --json --forceExit --silent`,
+      }
+    : {
+        ...meta,
+        solutionPath: id => path.join(__dirname, "react", id, "solution.tsx"),
+        testCommand: id => `npx vitest run react/${id} --reporter=json --silent`,
+      }
+);
 
 // ── Arrow-key menu ─────────────────────────────────────────────────────────────
 const BACK = Symbol("back");

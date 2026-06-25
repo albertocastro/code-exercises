@@ -2,8 +2,11 @@ import { Tabs } from "./solution";
 
 export default function Demo() {
   return (
-    <div>
-      <h2>Tabs</h2>
+    <div className="exercise-demo">
+      <div className="exercise-title">
+        <h2>Tabs</h2>
+        <p>Switch panels with clicks, then add ARIA and keyboard support.</p>
+      </div>
       <Tabs
         tabs={[
           { label: "Profile", content: <p>Your profile details.</p> },

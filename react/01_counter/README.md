@@ -7,7 +7,7 @@ You edit `solution.tsx`. Tests watch the file and auto-advance levels as they pa
 Run from the CLI (`npm start` → React → Counter), or directly:
 
 ```bash
-LEVEL=1 npx vitest run react/01_counter   # one level
+LEVEL=1 npx vitest run react/01_counter   # through level 1
 npx vitest react/01_counter                # watch, all levels
 ```
 

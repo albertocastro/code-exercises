@@ -6,27 +6,52 @@
     <title>React Exercise — Live Preview</title>
     <style>
       body {
-        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
         margin: 0;
         padding: 2rem;
-        color: #1a1a1a;
-        background: #fafafa;
+        color: #172033;
+        background:
+          radial-gradient(circle at top left, rgba(79, 193, 255, 0.18), transparent 28rem),
+          linear-gradient(135deg, #f8fbff 0%, #eef3f8 48%, #f7f4ee 100%);
       }
       #root {
-        max-width: 32rem;
+        max-width: 36rem;
         margin: 0 auto;
-        background: #fff;
-        border: 1px solid #e5e5e5;
-        border-radius: 12px;
-        padding: 1.5rem 2rem;
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        border-radius: 18px;
+        box-shadow: 0 20px 60px rgba(15, 23, 42, 0.12);
+        padding: 1.75rem 2rem;
       }
-      button {
-        cursor: pointer;
-        margin: 0.15rem;
-      }
-      h2 {
-        margin-top: 0;
-      }
+      button { cursor: pointer; }
+      h2 { margin: 0; }
+      .exercise-demo { display: grid; gap: 1.25rem; }
+      .exercise-title { display: grid; gap: 0.25rem; }
+      .exercise-title h2 { font-size: 1.35rem; color: #0f172a; }
+      .exercise-title p { margin: 0; color: #64748b; font-size: 0.9rem; }
+      .exercise-card { display: grid; gap: 1rem; padding: 1rem; border: 1px solid #e2e8f0; border-radius: 14px; background: #ffffff; }
+      .exercise-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+      .exercise-field { display: grid; gap: 0.25rem; color: #64748b; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+      .exercise-input { width: 5rem; border: 1px solid #cbd5e1; border-radius: 10px; padding: 0.45rem 0.6rem; font: inherit; }
+      .exercise-button { border: 1px solid #cbd5e1; border-radius: 999px; background: #f8fafc; color: #0f172a; padding: 0.5rem 0.85rem; font-weight: 700; }
+      .exercise-button:hover { border-color: #38bdf8; background: #eff6ff; }
+      .exercise-button:disabled { opacity: 0.45; cursor: not-allowed; }
+      .exercise-count { min-width: 4rem; text-align: center; border-radius: 14px; background: #0f172a; color: #f8fafc; padding: 0.7rem 1rem; font-size: 1.6rem; font-weight: 800; }
+      .exercise-muted { color: #64748b; font-size: 0.85rem; }
+      .exercise-stars { display: flex; gap: 0.35rem; }
+      .exercise-star { border: none; background: transparent; color: #94a3b8; font-size: 2rem; line-height: 1; padding: 0.15rem; }
+      .exercise-star[aria-pressed="true"] { color: #f59e0b; }
+      .exercise-list { display: grid; gap: 0.5rem; padding: 0; margin: 0; list-style: none; }
+      .exercise-list-item { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; border: 1px solid #e2e8f0; border-radius: 12px; padding: 0.65rem 0.75rem; background: #f8fafc; }
+      .exercise-list-item[data-completed="true"] { color: #64748b; text-decoration: line-through; }
+      .exercise-search { display: grid; gap: 0.75rem; }
+      .exercise-option { padding: 0.65rem 0.75rem; border-radius: 10px; border: 1px solid transparent; }
+      .exercise-option[aria-selected="true"] { border-color: #38bdf8; background: #eff6ff; }
+      .exercise-tabs { display: grid; gap: 1rem; }
+      .exercise-tablist { display: flex; gap: 0.35rem; padding: 0.25rem; border-radius: 999px; background: #e2e8f0; }
+      .exercise-tab { flex: 1; border: none; border-radius: 999px; background: transparent; color: #475569; padding: 0.5rem 0.85rem; font-weight: 700; }
+      .exercise-tab[aria-selected="true"] { background: #ffffff; color: #0f172a; box-shadow: 0 1px 6px rgba(15, 23, 42, 0.1); }
+      .exercise-panel { border: 1px solid #e2e8f0; border-radius: 14px; padding: 1rem; background: #f8fafc; }
     </style>
   </head>
   <body>

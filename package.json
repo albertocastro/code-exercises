@@ -8,7 +8,9 @@
     "test:react": "vitest run",
     "watch:react": "vitest",
     "test:all": "jest && vitest run",
-    "preview:web": "vite"
+    "preview:web": "vite",
+    "web": "vite --config vite.web.config.ts",
+    "web:build": "vite build --config vite.web.config.ts"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
@@ -42,7 +44,15 @@
     ]
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@shikijs/monaco": "^1.29.2",
+    "monaco-editor": "^0.52.2",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.1.0",
+    "react-resizable-panels": "^2.1.9",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^1.29.2",
+    "sucrase": "^3.35.1"
   }
 }

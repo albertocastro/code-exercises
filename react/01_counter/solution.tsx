@@ -26,8 +26,15 @@ export function Counter(props: CounterProps) {
   //   `onChange(newValue)` on every change.
 
   return (
-    <div>
-      <span data-testid="count">{value}</span>
+    <div className="exercise-card">
+      <div className="exercise-row">
+        <span className="exercise-count" data-testid="count">{value}</span>
+      </div>
+      
+      <div className="exercise-row">
+        <button className="exercise-button" aria-label="decrement" onClick={()=>{setValue(value-1)}}>decrease</button>
+        <button className="exercise-button" aria-label="increment" onClick={()=>{setValue(value+1)}}>Increase</button>
+      </div>
     </div>
   );
 }

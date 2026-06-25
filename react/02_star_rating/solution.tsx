@@ -25,9 +25,15 @@ export function StarRating(props: StarRatingProps) {
   //   and clearing by clicking the current rating again.
 
   return (
-    <div role="radiogroup" aria-label="rating">
+    <div className="exercise-stars" role="radiogroup" aria-label="rating">
       {Array.from({ length: max }, (_, i) => i + 1).map((n) => (
-        <button key={n} type="button" aria-label={`${n} star${n > 1 ? "s" : ""}`} aria-pressed={false}>
+        <button
+          className="exercise-star"
+          key={n}
+          type="button"
+          aria-label={`${n} star${n > 1 ? "s" : ""}`}
+          aria-pressed={false}
+        >
           ☆
         </button>
       ))}
