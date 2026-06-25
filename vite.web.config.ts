@@ -7,6 +7,22 @@ import * as path from "path";
 export default defineConfig({
   plugins: [react()],
   root: path.resolve(__dirname, "web"),
+  // Pre-bundle the heavy deps at startup so entering the workspace doesn't
+  // trigger a mid-session re-optimization (which 504s in-flight Monaco chunks).
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "@testing-library/react",
+      "@testing-library/user-event",
+      "sucrase",
+    ],
+    // Monaco ships its own ESM + workers; pre-bundling its huge TS language
+    // service breaks dev. Serve it as native ESM instead.
+    exclude: ["monaco-editor", "@monaco-editor/react"],
+  },
   server: {
     port: 5180,
     open: false,

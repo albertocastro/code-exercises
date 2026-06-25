@@ -44,17 +44,8 @@ body {
 .back:hover { background: var(--panel-2); }
 
 .content { padding: 28px 32px; max-width: 1100px; margin: 0 auto; width: 100%; flex: 1; min-height: 0; overflow: auto; }
-.content-fluid { flex: 1; min-height: 0; display: flex; overflow: hidden; position: relative; }
-/* SandpackProvider injects a .sp-wrapper between the layout and .ws. Its own
-   runtime styles can override a flex rule, so pin it to exactly fill the
-   container — this guarantees the workspace is viewport-bounded and the README
-   scrolls inside its panel instead of stretching the whole page. */
-.content-fluid > .sp-wrapper {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-}
+.content-fluid { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.content-fluid > .ws { flex: 1; min-width: 0; }
 
 h1 { font-size: 20px; margin: 0 0 6px; }
 .muted { color: var(--muted); }
@@ -159,7 +150,53 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 .tab:hover { color: var(--text); }
 .tab.active { background: var(--panel); color: var(--accent); }
 .fill { height: 100%; }
-.panel-body > .fill + .fill { /* stacked tab panes share the body */ }
+.fill.scroll { overflow: auto; }
+
+/* ── Local runner: tests + preview ── */
+.tests { font-size: 12.5px; }
+.tests-bar {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 8px 14px;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.ok { color: var(--green); }
+.ok.strong { font-weight: 600; }
+.bad { color: #f48771; }
+.tests-body { padding: 6px 0 16px; }
+.test-row { display: flex; gap: 8px; padding: 4px 14px; align-items: flex-start; }
+.test-row .mark { width: 12px; }
+.test-row.pass .mark { color: var(--green); }
+.test-row.fail .mark { color: #f48771; }
+.test-name { color: var(--text); }
+.test-row.pass .test-name { color: var(--muted); }
+.test-err {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  background: #2a1d1d;
+  border: 1px solid #5a3a3a;
+  border-radius: 6px;
+  color: #f4a89b;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+.run-error {
+  margin: 12px 14px;
+  padding: 10px 12px;
+  background: #2a1d1d;
+  border: 1px solid #5a3a3a;
+  border-radius: 6px;
+  color: #f4a89b;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.preview-host { padding: 16px; color: var(--text); background: #fff; min-height: 100%; }
+.preview-host, .preview-host * { color: #1a1a1a; }
 
 /* ── Markdown ── */
 .markdown { line-height: 1.6; color: var(--text); }
