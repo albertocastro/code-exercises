@@ -7,7 +7,9 @@ import { Markdown } from "./Markdown";
 import { TestPanel } from "./TestPanel";
 import { PreviewPanel } from "./PreviewPanel";
 import { Explorer, type FileEntry } from "./Explorer";
-import { getDraft, saveDraft, clearDraft } from "./drafts";
+import { getDraft, saveDraft, clearDraft, getDraftHistory, saveDraftSnapshot, type DraftRevision } from "./drafts";
+import { getCompileMarkers } from "./diagnostics";
+import { formatCode } from "./format";
 import {
   getExercise,
   recordAttempt,
@@ -38,11 +40,18 @@ export function Workspace({
   const hasPreview = categoryId === "react" && !!files.previewCode;
   const key = `${categoryId}/${exercise.id}`;
   const [code, setCode] = useState(() => getDraft(key) ?? files.solutionCode);
+  const [history, setHistory] = useState<DraftRevision[]>(() => getDraftHistory(key));
   const [activeFile, setActiveFile] = useState("solution");
   const [tab, setTab] = useState<"tests" | "preview">(hasPreview ? "preview" : "tests");
   const [prog, setProg] = useState<ExerciseProgress>(() => getExercise(key));
   const [green, setGreen] = useState(false);
   const [hint, setHint] = useState<ComplexityResult | null>(null);
+  const [formatError, setFormatError] = useState<string | null>(null);
+  const [formatting, setFormatting] = useState(false);
+  const [runNonce, setRunNonce] = useState(0);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [selectedRevision, setSelectedRevision] = useState("");
+  const [editorTarget, setEditorTarget] = useState<{ line: number; column: number; nonce: number } | null>(null);
   const [layout, setLayout] = useState<Layout>(
     () => (localStorage.getItem(LAYOUT_KEY) as Layout) || "split"
   );
@@ -65,12 +74,16 @@ export function Workspace({
   const editCode = (next: string) => {
     setCode(next);
     setHint(null);
+    setFormatError(null);
     saveDraft(key, next);
+    setSavedAt(Date.now());
   };
   const resetCode = () => {
     clearDraft(key);
     setCode(files.solutionCode);
     setHint(null);
+    setFormatError(null);
+    setSavedAt(Date.now());
   };
 
   const chooseLayout = (l: Layout) => {
@@ -120,6 +133,55 @@ export function Workspace({
   if (files.previewCode) openFiles.preview = { path: "/preview.tsx", code: files.previewCode, ro: true };
   if (files.perfCode) openFiles.perf = { path: "/perf.ts", code: files.perfCode, ro: true };
   const af = openFiles[activeFile] ?? openFiles.solution;
+  const canFormat = !af.ro && !formatting;
+  const markers = af.ro ? [] : getCompileMarkers(af.code, af.path);
+  const savedLabel = savedAt
+    ? `Saved ${new Date(savedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+    : "Saved locally";
+
+  const onFormat = async () => {
+    if (!canFormat) return;
+    setFormatting(true);
+    setFormatError(null);
+    try {
+      editCode(await formatCode(code, af.path));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to format code.";
+      setFormatError(message);
+    } finally {
+      setFormatting(false);
+    }
+  };
+
+  const jumpToSource = (line: number, column: number) => {
+    setActiveFile("solution");
+    setEditorTarget((prev) => ({ line, column, nonce: (prev?.nonce ?? 0) + 1 }));
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || (!e.metaKey && !e.ctrlKey) || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      setTab("tests");
+      setRunNonce((n) => n + 1);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      if (code === files.solutionCode && !getDraft(key)) return;
+      setHistory(saveDraftSnapshot(key, code, Date.now()));
+    }, 1500);
+    return () => window.clearTimeout(t);
+  }, [code, files.solutionCode, key]);
+
+  const restoreRevision = () => {
+    const revision = history.find((item) => String(item.savedAt) === selectedRevision);
+    if (!revision) return;
+    editCode(revision.code);
+  };
 
   const fileEntries: FileEntry[] = [
     { id: "solution", name: files.solutionPath.slice(1), readOnly: false },
@@ -131,16 +193,37 @@ export function Workspace({
   const editorBody = (
     <>
       <div className="panel-head mono">
-        {af.path}
-        {af.ro && <span className="ro-tag">read-only</span>}
+        <div className="panel-head-title">
+          {af.path}
+          {af.ro && <span className="ro-tag">read-only</span>}
+        </div>
+        {!af.ro && (
+          <button className="panel-action" onClick={onFormat} disabled={!canFormat} title="Format code">
+            {formatting ? "Formatting…" : "Format"}
+          </button>
+        )}
       </div>
       <div className="panel-body">
-        <CodeEditor path={af.path} value={af.code} onChange={editCode} readOnly={af.ro} />
+        <CodeEditor
+          path={af.path}
+          value={af.code}
+          onChange={editCode}
+          readOnly={af.ro}
+          markers={markers}
+          goTo={af.ro ? null : editorTarget}
+        />
       </div>
     </>
   );
   const testsContent = (
-    <TestPanel testCode={files.testCode} solutionCode={code} level={level} onResult={onResult} />
+    <TestPanel
+      testCode={files.testCode}
+      solutionCode={code}
+      level={level}
+      onResult={onResult}
+      runNonce={runNonce}
+      onJumpToSource={jumpToSource}
+    />
   );
   const previewContent = files.previewCode ? (
     <PreviewPanel previewCode={files.previewCode} solutionCode={code} />
@@ -181,6 +264,36 @@ export function Workspace({
               {timer.running ? "⏸" : "▶"}
             </button>
           </div>
+
+          <div className="save-status" title="Drafts are saved locally">
+            {savedLabel}
+          </div>
+
+          {history.length > 0 && (
+            <div className="history-tools">
+              <select
+                className="history-select"
+                value={selectedRevision}
+                onChange={(e) => setSelectedRevision(e.target.value)}
+                title="Restore an earlier draft snapshot"
+              >
+                <option value="">History</option>
+                {history.map((item) => (
+                  <option key={item.savedAt} value={String(item.savedAt)}>
+                    {new Date(item.savedAt).toLocaleString([], {
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </option>
+                ))}
+              </select>
+              <button className="reset" disabled={!selectedRevision} onClick={restoreRevision}>
+                restore
+              </button>
+            </div>
+          )}
 
           <div className="dots">
             {Array.from({ length: exercise.levels }, (_, i) => i + 1).map((n) => {
@@ -226,6 +339,12 @@ export function Workspace({
                 ⚠ Correct, but this looks ~{hint.measured}. Aim for {hint.expected}.
               </span>
             ))}
+        </div>
+      )}
+
+      {formatError && (
+        <div className="banner-row">
+          <span className="banner warn">Format failed: {formatError}</span>
         </div>
       )}
 
