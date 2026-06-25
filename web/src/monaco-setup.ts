@@ -23,6 +23,12 @@ self.MonacoEnvironment = {
 // Point @monaco-editor/react at the bundled instance (no network loader).
 loader.config({ monaco });
 
+// Register a fallback "dark-plus" theme up front. Shiki later replaces Monaco's
+// theme registry (so built-ins like "vs-dark" disappear); by always using
+// "dark-plus" — defined here before Shiki, and by Shiki after — the editor never
+// references a missing theme (which previously crashed on remount).
+monaco.editor.defineTheme("dark-plus", { base: "vs-dark", inherit: true, rules: [], colors: {} });
+
 // Swap Monaco's tokenizer for Shiki (VS Code's TextMate grammars) so .tsx gets
 // real JSX highlighting. We alias `typescript` to the `tsx` grammar so every
 // model keeps the TypeScript language service (IntelliSense) while gaining

@@ -21,6 +21,7 @@ export function PreviewPanel({
 }) {
   const [Demo, setDemo] = useState<ComponentType | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
     try {
@@ -33,14 +34,23 @@ export function PreviewPanel({
     }
   }, [previewCode, solutionCode]);
 
-  if (error) return <pre className="run-error">{error}</pre>;
-  if (!Demo) return null;
   return (
-    <div className="preview-host">
-      {/* Remount on edit so a thrown render resets cleanly. */}
-      <ErrorBoundary key={solutionCode}>
-        <Demo />
-      </ErrorBoundary>
+    <div className="preview-wrap">
+      <div className="preview-bar">
+        <button className="run-btn" title="Refresh preview" onClick={() => setRefresh((n) => n + 1)}>
+          ↻ Refresh
+        </button>
+      </div>
+      {error ? (
+        <pre className="run-error">{error}</pre>
+      ) : Demo ? (
+        <div className="preview-host">
+          {/* Remount on edit or refresh so a thrown render / state resets cleanly. */}
+          <ErrorBoundary key={`${solutionCode}-${refresh}`}>
+            <Demo />
+          </ErrorBoundary>
+        </div>
+      ) : null}
     </div>
   );
 }

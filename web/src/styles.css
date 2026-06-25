@@ -211,8 +211,59 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 .insights-table th { color: var(--muted); font-weight: 500; }
 .insights-table .row-complete td:first-child { color: var(--green); }
 
+.ws-body { flex: 1; min-height: 0; display: flex; }
+.ws-main { flex: 1; min-width: 0; min-height: 0; display: flex; }
 .ws-panels { flex: 1; min-height: 0; }
 .results-group { flex: 1; min-height: 0; }
+
+/* ── File explorer ── */
+.explorer {
+  width: 180px;
+  flex: 0 0 180px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow: auto;
+  padding: 6px 0;
+}
+.explorer-head {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 6px 14px;
+}
+.file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 5px 14px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-family: ui-monospace, monospace;
+}
+.file:hover { background: var(--panel-2); }
+.file.active { background: var(--panel-2); color: var(--accent); }
+.file-icon { width: 16px; color: var(--muted); font-size: 11px; }
+.file-name { flex: 1; }
+.file .ro { font-size: 9.5px; color: var(--muted); opacity: 0.7; }
+.ro-tag { margin-left: 8px; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
+
+.run-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+  font-size: 11.5px;
+}
+.run-btn:hover { border-color: var(--accent-2); color: var(--accent); }
+.preview-wrap { display: flex; flex-direction: column; height: 100%; }
+.preview-bar { padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .panel-head {
   padding: 7px 12px;
@@ -292,7 +343,7 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   font-size: 12px;
   white-space: pre-wrap;
 }
-.preview-host { padding: 16px; color: var(--text); background: #fff; min-height: 100%; }
+.preview-host { flex: 1; min-height: 0; overflow: auto; padding: 16px; background: #fff; }
 .preview-host, .preview-host * { color: #1a1a1a; }
 
 /* ── Markdown ── */

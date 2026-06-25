@@ -14,6 +14,7 @@ export function TestPanel({
 }) {
   const [result, setResult] = useState<RunResult | null>(null);
   const [running, setRunning] = useState(true);
+  const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,11 +32,14 @@ export function TestPanel({
       clearTimeout(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [testCode, solutionCode, level]);
+  }, [testCode, solutionCode, level, nonce]);
 
   return (
     <div className="tests">
       <div className="tests-bar">
+        <button className="run-btn" title="Re-run tests" onClick={() => setNonce((n) => n + 1)}>
+          ↻ Run
+        </button>
         {running && <span className="muted">running…</span>}
         {!running && result && !result.compileError && (
           <>

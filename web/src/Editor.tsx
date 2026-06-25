@@ -5,10 +5,12 @@ export function CodeEditor({
   path,
   value,
   onChange,
+  readOnly,
 }: {
   path: string;
   value: string;
   onChange: (next: string) => void;
+  readOnly?: boolean;
 }) {
   const beforeMount = (monaco: Monaco) => {
     // Treat .ts/.tsx uniformly and allow JSX so the editor doesn't flag valid
@@ -35,7 +37,7 @@ export function CodeEditor({
   return (
     <MonacoEditor
       height="100%"
-      theme="vs-dark"
+      theme="dark-plus"
       language="typescript"
       path={path}
       value={value}
@@ -49,6 +51,7 @@ export function CodeEditor({
         automaticLayout: true,
         tabSize: 2,
         padding: { top: 12 },
+        readOnly: !!readOnly,
         "semanticHighlighting.enabled": true,
       }}
     />

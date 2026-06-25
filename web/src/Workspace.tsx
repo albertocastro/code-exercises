@@ -6,6 +6,8 @@ import { CodeEditor } from "./Editor";
 import { Markdown } from "./Markdown";
 import { TestPanel } from "./TestPanel";
 import { PreviewPanel } from "./PreviewPanel";
+import { Explorer, type FileEntry } from "./Explorer";
+import { getDraft, saveDraft, clearDraft } from "./drafts";
 import {
   getExercise,
   recordAttempt,
@@ -35,7 +37,8 @@ export function Workspace({
 }) {
   const hasPreview = categoryId === "react" && !!files.previewCode;
   const key = `${categoryId}/${exercise.id}`;
-  const [code, setCode] = useState(files.solutionCode);
+  const [code, setCode] = useState(() => getDraft(key) ?? files.solutionCode);
+  const [activeFile, setActiveFile] = useState("solution");
   const [tab, setTab] = useState<"tests" | "preview">(hasPreview ? "preview" : "tests");
   const [prog, setProg] = useState<ExerciseProgress>(() => getExercise(key));
   const [green, setGreen] = useState(false);
@@ -58,9 +61,15 @@ export function Workspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [level, exercise.id]);
 
-  // Editing invalidates the last complexity verdict.
+  // Editing invalidates the last complexity verdict and is persisted.
   const editCode = (next: string) => {
     setCode(next);
+    setHint(null);
+    saveDraft(key, next);
+  };
+  const resetCode = () => {
+    clearDraft(key);
+    setCode(files.solutionCode);
     setHint(null);
   };
 
@@ -102,11 +111,31 @@ export function Workspace({
       </div>
     </>
   );
+  // Active file in the editor pane (solution is editable; the rest are read-only,
+  // so you can inspect the tests / preview / perf spec while you debug).
+  const openFiles: Record<string, { path: string; code: string; ro: boolean }> = {
+    solution: { path: files.solutionPath, code, ro: false },
+    test: { path: files.testPath, code: files.testCode, ro: true },
+  };
+  if (files.previewCode) openFiles.preview = { path: "/preview.tsx", code: files.previewCode, ro: true };
+  if (files.perfCode) openFiles.perf = { path: "/perf.ts", code: files.perfCode, ro: true };
+  const af = openFiles[activeFile] ?? openFiles.solution;
+
+  const fileEntries: FileEntry[] = [
+    { id: "solution", name: files.solutionPath.slice(1), readOnly: false },
+    { id: "test", name: files.testPath.slice(1), readOnly: true },
+    ...(files.previewCode ? [{ id: "preview", name: "preview.tsx", readOnly: true }] : []),
+    ...(files.perfCode ? [{ id: "perf", name: "perf.ts", readOnly: true }] : []),
+  ];
+
   const editorBody = (
     <>
-      <div className="panel-head mono">{files.solutionPath}</div>
+      <div className="panel-head mono">
+        {af.path}
+        {af.ro && <span className="ro-tag">read-only</span>}
+      </div>
       <div className="panel-body">
-        <CodeEditor path={files.solutionPath} value={code} onChange={editCode} />
+        <CodeEditor path={af.path} value={af.code} onChange={editCode} readOnly={af.ro} />
       </div>
     </>
   );
@@ -180,7 +209,7 @@ export function Workspace({
             {submitted ? "Submitted ✓" : "Submit"}
           </button>
 
-          <button className="reset" title="Reset to starter code" onClick={() => setCode(files.solutionCode)}>
+          <button className="reset" title="Reset to starter code" onClick={resetCode}>
             reset
           </button>
         </div>
@@ -200,6 +229,9 @@ export function Workspace({
         </div>
       )}
 
+      <div className="ws-body">
+        <Explorer files={fileEntries} active={activeFile} onSelect={setActiveFile} />
+        <div className="ws-main">
       {layout === "split" ? (
         <PanelGroup direction="horizontal" className="ws-panels" autoSaveId={`ws-${categoryId}-split`}>
           <Panel defaultSize={32} minSize={16} className="panel">
@@ -282,6 +314,8 @@ export function Workspace({
           </Panel>
         </PanelGroup>
       )}
+        </div>
+      </div>
     </div>
   );
 }
