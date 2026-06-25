@@ -80,3 +80,10 @@ export function allProgress(): Store {
 export function resetAll() {
   localStorage.removeItem(KEY);
 }
+
+export function resetExercise(key: string): ExerciseProgress {
+  const store = load();
+  delete store[key];
+  save(store);
+  return blank();
+}

@@ -1,5 +1,6 @@
 import { Component, useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { compilePreview } from "./runner/preview";
+import type { ConsoleSink } from "./runner/consoleCapture";
 
 const URL_CHANGE_EVENT = "code-exercises:urlchange";
 let restoreHistoryTracking: (() => void) | null = null;
@@ -36,10 +37,25 @@ function uninstallHistoryTracking() {
   if (historyTrackingRefs === 0) restoreHistoryTracking?.();
 }
 
-class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+function errorToString(error: unknown): string {
+  if (error instanceof Error) return error.stack || error.message;
+  return String(error);
+}
+
+class ErrorBoundary extends Component<
+  { children: ReactNode; onConsole?: ConsoleSink },
+  { error: string | null }
+> {
   state = { error: null as string | null };
   static getDerivedStateFromError(e: unknown) {
-    return { error: e instanceof Error ? e.message : String(e) };
+    return { error: errorToString(e) };
+  }
+  componentDidCatch(error: unknown) {
+    this.props.onConsole?.({
+      source: "preview",
+      level: "error",
+      args: [errorToString(error)],
+    });
   }
   render() {
     if (this.state.error) return <pre className="run-error">{this.state.error}</pre>;
@@ -50,9 +66,11 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
 export function PreviewPanel({
   previewCode,
   solutionCode,
+  onConsole,
 }: {
   previewCode: string;
   solutionCode: string;
+  onConsole?: ConsoleSink;
 }) {
   const [Demo, setDemo] = useState<ComponentType | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,15 +80,30 @@ export function PreviewPanel({
   const initialUrlRef = useRef(window.location.href);
 
   useEffect(() => {
-    try {
-      const C = compilePreview(previewCode, solutionCode);
-      setDemo(() => C);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setDemo(null);
-    }
-  }, [previewCode, solutionCode]);
+    if (!onConsole) return;
+
+    const onError = (event: ErrorEvent) => {
+      onConsole({
+        source: "preview",
+        level: "error",
+        args: [event.error ? errorToString(event.error) : event.message],
+      });
+    };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      onConsole({
+        source: "preview",
+        level: "error",
+        args: [errorToString(event.reason)],
+      });
+    };
+
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, [onConsole]);
 
   useEffect(() => {
     const cleanup = installHistoryTracking();
@@ -85,6 +118,17 @@ export function PreviewPanel({
       cleanup();
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      const C = compilePreview(previewCode, solutionCode, onConsole);
+      setDemo(() => C);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setDemo(null);
+    }
+  }, [previewCode, solutionCode]);
 
   useEffect(() => {
     setDraftUrl(url);
@@ -124,7 +168,7 @@ export function PreviewPanel({
       ) : Demo ? (
         <div className="preview-host">
           {/* Remount on edit or refresh so a thrown render / state resets cleanly. */}
-          <ErrorBoundary key={`${solutionCode}-${refresh}`}>
+          <ErrorBoundary key={`${solutionCode}-${refresh}`} onConsole={onConsole}>
             <Demo />
           </ErrorBoundary>
         </div>

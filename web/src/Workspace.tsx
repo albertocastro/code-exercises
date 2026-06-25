@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import type { ExerciseMeta } from "../../catalog";
 import type { ExerciseFiles } from "./manifest";
@@ -6,23 +6,27 @@ import { CodeEditor } from "./Editor";
 import { Markdown } from "./Markdown";
 import { TestPanel } from "./TestPanel";
 import { PreviewPanel } from "./PreviewPanel";
+import { ConsolePanel } from "./ConsolePanel";
 import { Explorer, type FileEntry } from "./Explorer";
-import { getDraft, saveDraft, clearDraft, getDraftHistory, saveDraftSnapshot, type DraftRevision } from "./drafts";
-import { getCompileMarkers } from "./diagnostics";
-import { formatCode } from "./format";
+import { getDraft, saveDraft, clearDraft } from "./drafts";
 import {
   getExercise,
   recordAttempt,
   markPassed,
   submitLevel,
+  resetExercise,
   type ExerciseProgress,
 } from "./progress";
 import { useTimer, fmtTime } from "./useTimer";
 import { runComplexity, type ComplexityResult } from "./runner/complexity";
 import type { RunResult } from "./runner/testRunner";
+import type { ConsoleEntry, ConsoleSink } from "./runner/consoleCapture";
 
 type Layout = "split" | "columns";
+type DiagnosticsTab = "preview" | "tests" | "console";
+type DiagnosticsLayout = "single" | "split";
 const LAYOUT_KEY = "code-exercises-layout";
+const EXECUTION_DEBOUNCE_MS = 800;
 
 export function Workspace({
   categoryId,
@@ -40,50 +44,76 @@ export function Workspace({
   const hasPreview = categoryId === "react" && !!files.previewCode;
   const key = `${categoryId}/${exercise.id}`;
   const [code, setCode] = useState(() => getDraft(key) ?? files.solutionCode);
-  const [history, setHistory] = useState<DraftRevision[]>(() => getDraftHistory(key));
+  const [executionCode, setExecutionCode] = useState(code);
   const [activeFile, setActiveFile] = useState("solution");
-  const [tab, setTab] = useState<"tests" | "preview">(hasPreview ? "preview" : "tests");
+  const [tab, setTab] = useState<DiagnosticsTab>(hasPreview ? "preview" : "tests");
+  const [diagnosticsLayout, setDiagnosticsLayout] = useState<DiagnosticsLayout>("single");
+  const [explorerCollapsed, setExplorerCollapsed] = useState(false);
+  const [consoleEntries, setConsoleEntries] = useState<ConsoleEntry[]>([]);
   const [prog, setProg] = useState<ExerciseProgress>(() => getExercise(key));
   const [green, setGreen] = useState(false);
   const [hint, setHint] = useState<ComplexityResult | null>(null);
-  const [formatError, setFormatError] = useState<string | null>(null);
-  const [formatting, setFormatting] = useState(false);
-  const [runNonce, setRunNonce] = useState(0);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [selectedRevision, setSelectedRevision] = useState("");
-  const [editorTarget, setEditorTarget] = useState<{ line: number; column: number; nonce: number } | null>(null);
   const [layout, setLayout] = useState<Layout>(
     () => (localStorage.getItem(LAYOUT_KEY) as Layout) || "split"
   );
   const timer = useTimer();
+  const nextConsoleId = useRef(1);
 
   const submitted = !!prog.levels[level]?.submittedAt;
   const unlocked = prog.unlockedLevel;
-  const canSubmit = green && !submitted;
+  const executionPending = code !== executionCode;
+  const canSubmit = green && !submitted && !executionPending;
   const complete = prog.unlockedLevel > exercise.levels;
+  const completedStats = Object.values(prog.levels).filter((stat) => stat.submittedAt);
+  const completedTime = completedStats.reduce((sum, stat) => sum + (stat.timeMs || 0), 0);
+  const completedAttempts = completedStats.reduce((sum, stat) => sum + (stat.attempts || 0), 0);
 
   useEffect(() => {
     setGreen(false);
+    setConsoleEntries([]);
     timer.setElapsed(0);
     if (submitted) timer.stop();
     else timer.start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [level, exercise.id]);
 
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setConsoleEntries([]);
+      setExecutionCode(code);
+    }, EXECUTION_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [code]);
+
   // Editing invalidates the last complexity verdict and is persisted.
   const editCode = (next: string) => {
     setCode(next);
+    setGreen(false);
     setHint(null);
-    setFormatError(null);
     saveDraft(key, next);
-    setSavedAt(Date.now());
   };
   const resetCode = () => {
     clearDraft(key);
     setCode(files.solutionCode);
+    setGreen(false);
     setHint(null);
-    setFormatError(null);
-    setSavedAt(Date.now());
+  };
+  const resetWholeExercise = () => {
+    if (!confirm("Reset this exercise? This deletes its draft and progress, then returns to level 1.")) {
+      return;
+    }
+
+    clearDraft(key);
+    setCode(files.solutionCode);
+    setExecutionCode(files.solutionCode);
+    setProg(resetExercise(key));
+    setGreen(false);
+    setHint(null);
+    setConsoleEntries([]);
+    timer.setElapsed(0);
+    timer.start();
+    onLevel(1);
   };
 
   const chooseLayout = (l: Layout) => {
@@ -99,6 +129,12 @@ export function Workspace({
       timer.stop();
       setProg(markPassed(key, level));
     }
+  };
+  const onConsole: ConsoleSink = (entry) => {
+    setConsoleEntries((prev) => [
+      ...prev,
+      { ...entry, id: nextConsoleId.current++ },
+    ]);
   };
 
   const submit = () => {
@@ -133,55 +169,6 @@ export function Workspace({
   if (files.previewCode) openFiles.preview = { path: "/preview.tsx", code: files.previewCode, ro: true };
   if (files.perfCode) openFiles.perf = { path: "/perf.ts", code: files.perfCode, ro: true };
   const af = openFiles[activeFile] ?? openFiles.solution;
-  const canFormat = !af.ro && !formatting;
-  const markers = af.ro ? [] : getCompileMarkers(af.code, af.path);
-  const savedLabel = savedAt
-    ? `Saved ${new Date(savedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-    : "Saved locally";
-
-  const onFormat = async () => {
-    if (!canFormat) return;
-    setFormatting(true);
-    setFormatError(null);
-    try {
-      editCode(await formatCode(code, af.path));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to format code.";
-      setFormatError(message);
-    } finally {
-      setFormatting(false);
-    }
-  };
-
-  const jumpToSource = (line: number, column: number) => {
-    setActiveFile("solution");
-    setEditorTarget((prev) => ({ line, column, nonce: (prev?.nonce ?? 0) + 1 }));
-  };
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Enter" || (!e.metaKey && !e.ctrlKey) || e.shiftKey || e.altKey) return;
-      e.preventDefault();
-      setTab("tests");
-      setRunNonce((n) => n + 1);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      if (code === files.solutionCode && !getDraft(key)) return;
-      setHistory(saveDraftSnapshot(key, code, Date.now()));
-    }, 1500);
-    return () => window.clearTimeout(t);
-  }, [code, files.solutionCode, key]);
-
-  const restoreRevision = () => {
-    const revision = history.find((item) => String(item.savedAt) === selectedRevision);
-    if (!revision) return;
-    editCode(revision.code);
-  };
 
   const fileEntries: FileEntry[] = [
     { id: "solution", name: files.solutionPath.slice(1), readOnly: false },
@@ -193,41 +180,83 @@ export function Workspace({
   const editorBody = (
     <>
       <div className="panel-head mono">
-        <div className="panel-head-title">
-          {af.path}
-          {af.ro && <span className="ro-tag">read-only</span>}
-        </div>
-        {!af.ro && (
-          <button className="panel-action" onClick={onFormat} disabled={!canFormat} title="Format code">
-            {formatting ? "Formatting…" : "Format"}
-          </button>
-        )}
+        {af.path}
+        {af.ro && <span className="ro-tag">read-only</span>}
       </div>
       <div className="panel-body">
-        <CodeEditor
-          path={af.path}
-          value={af.code}
-          onChange={editCode}
-          readOnly={af.ro}
-          markers={markers}
-          goTo={af.ro ? null : editorTarget}
-        />
+        <CodeEditor path={af.path} value={af.code} onChange={editCode} readOnly={af.ro} />
       </div>
     </>
   );
   const testsContent = (
     <TestPanel
       testCode={files.testCode}
-      solutionCode={code}
+      solutionCode={executionCode}
       level={level}
       onResult={onResult}
-      runNonce={runNonce}
-      onJumpToSource={jumpToSource}
+      onConsole={onConsole}
     />
   );
   const previewContent = files.previewCode ? (
-    <PreviewPanel previewCode={files.previewCode} solutionCode={code} />
+    <PreviewPanel
+      previewCode={files.previewCode}
+      solutionCode={executionCode}
+      onConsole={onConsole}
+    />
   ) : null;
+  const consoleContent = (
+    <ConsolePanel entries={consoleEntries} onClear={() => setConsoleEntries([])} />
+  );
+  const diagnosticsPanel = (includePreview: boolean) => {
+    const activeTab = includePreview || tab !== "preview" ? tab : "tests";
+    const body =
+      diagnosticsLayout === "split" ? (
+        <div className="diagnostics-split">
+          <div className="diagnostics-pane">{testsContent}</div>
+          <div className="diagnostics-pane console-side">{consoleContent}</div>
+        </div>
+      ) : (
+        <>
+          {includePreview && hasPreview && activeTab === "preview" && previewContent}
+          {activeTab === "tests" && testsContent}
+          {activeTab === "console" && consoleContent}
+        </>
+      );
+
+    return (
+      <>
+        <div className="panel-head tabs">
+          {includePreview && hasPreview && (
+            <button className={`tab ${activeTab === "preview" ? "active" : ""}`} onClick={() => setTab("preview")}>
+              Preview
+            </button>
+          )}
+          <button className={`tab ${activeTab === "tests" ? "active" : ""}`} onClick={() => setTab("tests")}>
+            Tests
+          </button>
+          <button className={`tab ${activeTab === "console" ? "active" : ""}`} onClick={() => setTab("console")}>
+            Console
+          </button>
+          <button
+            className={`tab tab-tool ${diagnosticsLayout === "split" ? "active" : ""}`}
+            onClick={() => {
+              setDiagnosticsLayout((mode) => {
+                const next = mode === "split" ? "single" : "split";
+                if (next === "split") setTab("tests");
+                return next;
+              });
+            }}
+            title="Toggle Tests + Console side by side"
+          >
+            {diagnosticsLayout === "split" ? "Single" : "Side by side"}
+          </button>
+        </div>
+        <div className="panel-body">
+          <div className="fill scroll">{body}</div>
+        </div>
+      </>
+    );
+  };
 
   return (
     <div className="ws">
@@ -263,37 +292,10 @@ export function Workspace({
             >
               {timer.running ? "⏸" : "▶"}
             </button>
+            <button className="timer-btn" title="Reset timer" onClick={timer.reset}>
+              ↺
+            </button>
           </div>
-
-          <div className="save-status" title="Drafts are saved locally">
-            {savedLabel}
-          </div>
-
-          {history.length > 0 && (
-            <div className="history-tools">
-              <select
-                className="history-select"
-                value={selectedRevision}
-                onChange={(e) => setSelectedRevision(e.target.value)}
-                title="Restore an earlier draft snapshot"
-              >
-                <option value="">History</option>
-                {history.map((item) => (
-                  <option key={item.savedAt} value={String(item.savedAt)}>
-                    {new Date(item.savedAt).toLocaleString([], {
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                  </option>
-                ))}
-              </select>
-              <button className="reset" disabled={!selectedRevision} onClick={restoreRevision}>
-                restore
-              </button>
-            </div>
-          )}
 
           <div className="dots">
             {Array.from({ length: exercise.levels }, (_, i) => i + 1).map((n) => {
@@ -322,15 +324,26 @@ export function Workspace({
             {submitted ? "Submitted ✓" : "Submit"}
           </button>
 
-          <button className="reset" title="Reset to starter code" onClick={resetCode}>
-            reset
+          <button className="reset" title="Reset code to starter" onClick={resetCode}>
+            reset code
+          </button>
+
+          <button className="reset danger" title="Delete draft and progress for this exercise" onClick={resetWholeExercise}>
+            reset exercise
           </button>
         </div>
       </div>
 
       {(hint || complete) && (
         <div className="banner-row">
-          {complete && <span className="banner done">🎉 All {exercise.levels} levels complete!</span>}
+          {complete && (
+            <div className="exercise-insights">
+              <span className="banner done">All {exercise.levels} levels complete</span>
+              <span>Total time: {fmtTime(completedTime)}</span>
+              <span>Runs: {completedAttempts || "0"}</span>
+              <span>Avg / level: {fmtTime(exercise.levels ? completedTime / exercise.levels : 0)}</span>
+            </div>
+          )}
           {hint &&
             (hint.optimal ? (
               <span className="banner ok">✓ Optimal — {hint.expected}</span>
@@ -342,14 +355,14 @@ export function Workspace({
         </div>
       )}
 
-      {formatError && (
-        <div className="banner-row">
-          <span className="banner warn">Format failed: {formatError}</span>
-        </div>
-      )}
-
       <div className="ws-body">
-        <Explorer files={fileEntries} active={activeFile} onSelect={setActiveFile} />
+        <Explorer
+          files={fileEntries}
+          active={activeFile}
+          collapsed={explorerCollapsed}
+          onToggle={() => setExplorerCollapsed((value) => !value)}
+          onSelect={setActiveFile}
+        />
         <div className="ws-main">
       {layout === "split" ? (
         <PanelGroup direction="horizontal" className="ws-panels" autoSaveId={`ws-${categoryId}-split`}>
@@ -363,28 +376,9 @@ export function Workspace({
                 {editorBody}
               </Panel>
               <PanelResizeHandle className="rhandle vertical" />
-              <Panel minSize={15} className="panel">
-                <div className="panel-head tabs">
-                  {hasPreview && (
-                    <button className={`tab ${tab === "preview" ? "active" : ""}`} onClick={() => setTab("preview")}>
-                      Preview
-                    </button>
-                  )}
-                  <button className={`tab ${tab === "tests" ? "active" : ""}`} onClick={() => setTab("tests")}>
-                    Tests
-                  </button>
-                </div>
-                <div className="panel-body">
-                  {hasPreview && (
-                    <div className="fill scroll" style={{ display: tab === "preview" ? "block" : "none" }}>
-                      {previewContent}
-                    </div>
-                  )}
-                  <div className="fill scroll" style={{ display: tab === "tests" ? "block" : "none" }}>
-                    {testsContent}
-                  </div>
-                </div>
-              </Panel>
+	              <Panel minSize={15} className="panel">
+	                {diagnosticsPanel(true)}
+	              </Panel>
             </PanelGroup>
           </Panel>
         </PanelGroup>
@@ -402,12 +396,9 @@ export function Workspace({
                   {editorBody}
                 </Panel>
                 <PanelResizeHandle className="rhandle vertical" />
-                <Panel minSize={18} className="panel">
-                  <div className="panel-head">Tests</div>
-                  <div className="panel-body">
-                    <div className="fill scroll">{testsContent}</div>
-                  </div>
-                </Panel>
+	                <Panel minSize={18} className="panel">
+	                  {diagnosticsPanel(false)}
+	                </Panel>
               </PanelGroup>
             ) : (
               editorBody
@@ -423,12 +414,7 @@ export function Workspace({
                 </div>
               </>
             ) : (
-              <>
-                <div className="panel-head">Tests</div>
-                <div className="panel-body">
-                  <div className="fill scroll">{testsContent}</div>
-                </div>
-              </>
+              diagnosticsPanel(false)
             )}
           </Panel>
         </PanelGroup>

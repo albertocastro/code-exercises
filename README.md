@@ -65,12 +65,12 @@ footer in case the browser doesn't open automatically.
 
 ```bash
 # LeetCode (Jest)
-LEVEL=1 npx jest exercise_1          # one level
+LEVEL=1 npx jest exercise_1          # through level 1
 npx jest exercise_1                  # all levels
 npm test                             # all leetcode exercises
 
 # React (Vitest)
-LEVEL=1 npx vitest run react/01_counter   # one level
+LEVEL=1 npx vitest run react/01_counter   # through level 1
 npx vitest react/01_counter               # watch, all levels
 npm run test:react                        # all react exercises
 VITE_EXERCISE=01_counter npm run preview:web   # browser preview only
@@ -114,3 +114,6 @@ the dev server mounts for the live browser preview.
 
 The two runners are kept separate: Jest matches `**/*.test.ts`, Vitest is scoped
 to `react/**/*.test.tsx`, so they never collide.
+
+For guidance on adding exercises, writing levels, aligning tests with READMEs,
+and styling React previews, see [Authoring Exercises](./docs/authoring-exercises.md).

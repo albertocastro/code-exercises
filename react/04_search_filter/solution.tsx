@@ -31,17 +31,24 @@ export function SearchList({ items, onSelect, placeholder }: SearchListProps) {
   };
 
   return (
-    <div>
+    <div className="exercise-card exercise-search">
       <input
+        className="exercise-input"
         aria-label="search"
         placeholder={placeholder}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={onKeyDown}
       />
-      <ul role="listbox">
+      <ul className="exercise-list" role="listbox">
         {filtered.map((it) => (
-          <li key={it} role="option" aria-selected={false} onClick={() => onSelect?.(it)}>
+          <li
+            className="exercise-option"
+            key={it}
+            role="option"
+            aria-selected={false}
+            onClick={() => onSelect?.(it)}
+          >
             {it}
           </li>
         ))}

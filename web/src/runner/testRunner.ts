@@ -2,6 +2,7 @@ import { transpile } from "./transpile";
 import { evalModule, makeRequire } from "./modules";
 import { expect, makeVi } from "./expectSetup";
 import { clearSandbox } from "./rtl";
+import { makeCapturedConsole, type ConsoleSink } from "./consoleCapture";
 
 export interface TestRow {
   name: string;
@@ -132,11 +133,15 @@ async function runTree(root: DescribeNode): Promise<RunResult> {
 export async function runExercise(
   testCode: string,
   solutionCode: string,
-  level: number
+  level: number,
+  onConsole?: ConsoleSink
 ): Promise<RunResult> {
+  const capturedConsole = makeCapturedConsole("tests", onConsole);
   let solutionExports: Record<string, unknown>;
   try {
-    solutionExports = evalModule(transpile(solutionCode), makeRequire());
+    solutionExports = evalModule(transpile(solutionCode), makeRequire(), {
+      console: capturedConsole,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { rows: [], passed: 0, failed: 0, skipped: 0, compileError: `solution.tsx — ${msg}` };
@@ -144,17 +149,23 @@ export async function runExercise(
 
   const harness = createHarness();
   const proc = { env: { LEVEL: String(level) } };
+  const vi = makeVi();
   try {
     evalModule(transpile(testCode), makeRequire({ "./solution": solutionExports }), {
       ...harness.globals,
       expect,
-      vi: makeVi(),
+      vi,
       process: proc,
+      console: capturedConsole,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { rows: [], passed: 0, failed: 0, skipped: 0, compileError: `tests — ${msg}` };
   }
 
-  return runTree(harness.root);
+  try {
+    return await runTree(harness.root);
+  } finally {
+    vi.__restore(); // always restore real timers, even if a test forgot
+  }
 }

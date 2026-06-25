@@ -11,21 +11,24 @@ export default function Demo() {
   const [log, setLog] = useState<number[]>([]);
 
   const field = (label: string, value: number | string, set: (v: string) => void) => (
-    <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 2 }}>
+    <label className="exercise-field">
       {label}
       <input
+        className="exercise-input"
         type="number"
         value={value}
         onChange={(e) => set(e.target.value)}
-        style={{ width: 64, padding: "3px 6px" }}
       />
     </label>
   );
 
   return (
-    <div>
-      <h2>Counter</h2>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+    <div className="exercise-demo">
+      <div className="exercise-title">
+        <h2>Counter</h2>
+        <p>Try the props that each level unlocks.</p>
+      </div>
+      <div className="exercise-row">
         {field("initial", initial, (v) => setInitial(Number(v) || 0))}
         {field("step", step, (v) => setStep(Number(v) || 1))}
         {field("min", min, setMin)}
@@ -39,7 +42,7 @@ export default function Demo() {
         max={max === "" ? undefined : Number(max)}
         onChange={(v) => setLog((l) => [v, ...l].slice(0, 6))}
       />
-      <p style={{ fontSize: 12, color: "#555", marginTop: 12 }}>
+      <p className="exercise-muted">
         onChange log: [{log.join(", ")}]
       </p>
     </div>

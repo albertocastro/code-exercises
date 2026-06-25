@@ -6,10 +6,13 @@ const FRUITS = ["Apple", "Banana", "Cherry", "Date", "Avocado", "Grape", "Mango"
 export default function Demo() {
   const [picked, setPicked] = useState<string | null>(null);
   return (
-    <div>
-      <h2>Searchable List</h2>
+    <div className="exercise-demo">
+      <div className="exercise-title">
+        <h2>Searchable List</h2>
+        <p>Filter fruit names and select with the mouse or keyboard.</p>
+      </div>
       <SearchList items={FRUITS} placeholder="Search fruit…" onSelect={setPicked} />
-      <p>Picked: {picked ?? "—"}</p>
+      <p className="exercise-muted">Picked: {picked ?? "—"}</p>
     </div>
   );
 }

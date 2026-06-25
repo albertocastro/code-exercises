@@ -1,6 +1,4 @@
-import MonacoEditor, { type Monaco, type OnMount } from "@monaco-editor/react";
-import { useEffect, useRef } from "react";
-import type { editor } from "monaco-editor";
+import MonacoEditor, { type Monaco } from "@monaco-editor/react";
 import { installHighlighting } from "./monaco-setup";
 
 export function CodeEditor({
@@ -8,19 +6,12 @@ export function CodeEditor({
   value,
   onChange,
   readOnly,
-  markers,
-  goTo,
 }: {
   path: string;
   value: string;
   onChange: (next: string) => void;
   readOnly?: boolean;
-  markers?: editor.IMarkerData[];
-  goTo?: { line: number; column: number; nonce: number } | null;
 }) {
-  const monacoRef = useRef<Monaco | null>(null);
-  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
-
   const beforeMount = (monaco: Monaco) => {
     // Treat .ts/.tsx uniformly and allow JSX so the editor doesn't flag valid
     // component code. We don't run Monaco's type-checker here (tests are the
@@ -43,26 +34,6 @@ export function CodeEditor({
       .catch(() => {});
   };
 
-  const onMount: OnMount = (editorInstance, monaco) => {
-    editorRef.current = editorInstance;
-    monacoRef.current = monaco;
-  };
-
-  useEffect(() => {
-    const monaco = monacoRef.current;
-    const model = editorRef.current?.getModel();
-    if (!monaco || !model) return;
-    monaco.editor.setModelMarkers(model, "exercise-compile", markers ?? []);
-  }, [markers, path]);
-
-  useEffect(() => {
-    const instance = editorRef.current;
-    if (!instance || !goTo) return;
-    instance.setPosition({ lineNumber: goTo.line, column: goTo.column });
-    instance.revealPositionInCenter({ lineNumber: goTo.line, column: goTo.column });
-    instance.focus();
-  }, [goTo]);
-
   return (
     <MonacoEditor
       height="100%"
@@ -72,7 +43,6 @@ export function CodeEditor({
       value={value}
       onChange={(v) => onChange(v ?? "")}
       beforeMount={beforeMount}
-      onMount={onMount}
       options={{
         fontSize: 13,
         minimap: { enabled: false },
@@ -82,8 +52,6 @@ export function CodeEditor({
         tabSize: 2,
         padding: { top: 12 },
         readOnly: !!readOnly,
-        glyphMargin: true,
-        renderValidationDecorations: "on",
         "semanticHighlighting.enabled": true,
       }}
     />

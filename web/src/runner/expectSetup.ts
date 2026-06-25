@@ -157,26 +157,134 @@ export function expect(received: unknown) {
   return new Assertion(received);
 }
 
+type Impl = (...a: unknown[]) => unknown;
 export interface MockFn {
   (...args: unknown[]): unknown;
   mock: { calls: unknown[][] };
   _isMockFunction: true;
   mockClear: () => void;
   mockReset: () => void;
+  mockImplementation: (i: Impl) => MockFn;
+  mockImplementationOnce: (i: Impl) => MockFn;
+  mockReturnValue: (v: unknown) => MockFn;
+  mockReturnValueOnce: (v: unknown) => MockFn;
+  mockResolvedValue: (v: unknown) => MockFn;
+  mockResolvedValueOnce: (v: unknown) => MockFn;
+  mockRejectedValue: (v: unknown) => MockFn;
+  mockRejectedValueOnce: (v: unknown) => MockFn;
 }
 
-// Minimal vitest-`vi` so `vi.fn()` works.
+interface Timer {
+  id: number;
+  runAt: number;
+  cb: (...a: unknown[]) => void;
+  args: unknown[];
+  interval?: number;
+}
+
+// Minimal vitest-`vi` so `vi.fn()` and fake timers work in the browser runner.
 export function makeVi() {
-  const fn = (impl?: (...a: unknown[]) => unknown): MockFn => {
+  const fn = (impl?: Impl): MockFn => {
+    let defaultImpl = impl;
+    const onceQueue: Impl[] = [];
     const f = ((...args: unknown[]) => {
       f.mock.calls.push(args);
-      return impl?.(...args);
+      const next = onceQueue.shift() ?? defaultImpl;
+      return next?.(...args);
     }) as MockFn;
     f.mock = { calls: [] };
     f._isMockFunction = true;
     f.mockClear = () => (f.mock.calls = []);
-    f.mockReset = () => (f.mock.calls = []);
+    f.mockReset = () => {
+      f.mock.calls = [];
+      defaultImpl = undefined;
+      onceQueue.length = 0;
+    };
+    f.mockImplementation = (i) => ((defaultImpl = i), f);
+    f.mockImplementationOnce = (i) => (onceQueue.push(i), f);
+    f.mockReturnValue = (v) => ((defaultImpl = () => v), f);
+    f.mockReturnValueOnce = (v) => (onceQueue.push(() => v), f);
+    f.mockResolvedValue = (v) => ((defaultImpl = () => Promise.resolve(v)), f);
+    f.mockResolvedValueOnce = (v) => (onceQueue.push(() => Promise.resolve(v)), f);
+    f.mockRejectedValue = (v) => ((defaultImpl = () => Promise.reject(v)), f);
+    f.mockRejectedValueOnce = (v) => (onceQueue.push(() => Promise.reject(v)), f);
     return f;
   };
-  return { fn, clearAllMocks() {}, resetAllMocks() {} };
+
+  // ── fake timers ──
+  let faking = false;
+  let now = 0;
+  let seq = 1;
+  let timers: Timer[] = [];
+  const real = {
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval,
+  };
+  const add = (cb: unknown, delay: number, args: unknown[], interval?: number) => {
+    const id = seq++;
+    timers.push({ id, runAt: now + (delay || 0), cb: cb as Timer["cb"], args, interval });
+    return id as unknown as ReturnType<typeof setTimeout>;
+  };
+  const remove = (id: unknown) => {
+    timers = timers.filter((t) => t.id !== id);
+  };
+  const fireDueUpTo = (target: number) => {
+    let guard = 0;
+    for (;;) {
+      const due = timers.filter((t) => t.runAt <= target).sort((a, b) => a.runAt - b.runAt);
+      if (!due.length) break;
+      const t = due[0];
+      timers = timers.filter((x) => x !== t);
+      now = t.runAt;
+      if (t.interval !== undefined) timers.push({ ...t, runAt: now + t.interval });
+      t.cb(...t.args);
+      if (++guard > 100000) break;
+    }
+    now = target;
+  };
+
+  const useFakeTimers = () => {
+    if (faking) return;
+    faking = true;
+    now = 0;
+    seq = 1;
+    timers = [];
+    globalThis.setTimeout = ((cb: unknown, d = 0, ...a: unknown[]) => add(cb, d, a)) as typeof setTimeout;
+    globalThis.clearTimeout = ((id: unknown) => remove(id)) as typeof clearTimeout;
+    globalThis.setInterval = ((cb: unknown, d = 0, ...a: unknown[]) => add(cb, d, a, d)) as typeof setInterval;
+    globalThis.clearInterval = ((id: unknown) => remove(id)) as typeof clearInterval;
+  };
+  const useRealTimers = () => {
+    if (!faking) return;
+    faking = false;
+    globalThis.setTimeout = real.setTimeout;
+    globalThis.clearTimeout = real.clearTimeout;
+    globalThis.setInterval = real.setInterval;
+    globalThis.clearInterval = real.clearInterval;
+  };
+
+  return {
+    fn,
+    clearAllMocks() {},
+    resetAllMocks() {},
+    useFakeTimers,
+    useRealTimers,
+    advanceTimersByTime: (ms: number) => fireDueUpTo(now + ms),
+    runAllTimers: () => {
+      let guard = 0;
+      while (timers.length && guard++ < 100000) {
+        timers.sort((a, b) => a.runAt - b.runAt);
+        const t = timers.shift()!;
+        now = t.runAt;
+        t.cb(...t.args);
+      }
+    },
+    clearAllTimers: () => {
+      timers = [];
+    },
+    /** Safety hook for the runner to restore globals after a test file. */
+    __restore: useRealTimers,
+  };
 }

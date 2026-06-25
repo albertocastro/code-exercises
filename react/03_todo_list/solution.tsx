@@ -37,14 +37,19 @@ export function TodoList({ initialTodos = [] }: TodoListProps) {
   // TODO Level 4: filter (All/Active/Completed) and show the remaining count.
 
   return (
-    <div>
-      <form aria-label="add todo" onSubmit={add}>
-        <input aria-label="new todo" value={text} onChange={(e) => setText(e.target.value)} />
-        <button type="submit">Add</button>
+    <div className="exercise-card">
+      <form className="exercise-row" aria-label="add todo" onSubmit={add}>
+        <input
+          className="exercise-input"
+          aria-label="new todo"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+        <button className="exercise-button" type="submit">Add</button>
       </form>
-      <ul>
+      <ul className="exercise-list">
         {todos.map((td) => (
-          <li key={td.id} data-completed={td.completed}>
+          <li className="exercise-list-item" key={td.id} data-completed={td.completed}>
             <span>{td.text}</span>
           </li>
         ))}

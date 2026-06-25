@@ -19,6 +19,10 @@ export function useTimer() {
     setElapsed,
     start: () => setRunning(true),
     stop: () => setRunning(false),
+    reset: () => {
+      baseRef.current = Date.now();
+      setElapsed(0);
+    },
   };
 }
 
