@@ -27,7 +27,7 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
   // TODO Level 4: show errors only after the first submit attempt.
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    onSubmit?.({ email, password });
+    // TODO Level 1: call onSubmit({ email, password }) here.
   };
 
   return (

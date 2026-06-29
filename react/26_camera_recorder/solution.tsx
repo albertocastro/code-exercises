@@ -23,15 +23,15 @@ export function CameraRecorder({ maxSeconds = 3600 }: { maxSeconds?: number }) {
   const [seconds, setSeconds] = useState(0);
   const [snapshots, setSnapshots] = useState<number[]>([]);
 
-  // TODO Level 1: while `recording`, advance `seconds` once per second with
-  //   setInterval. Stash the interval id in a useRef and clear it in a
-  //   useEffect cleanup so it stops on Stop / unmount. The Record button
-  //   toggles `recording`; its label is "Stop" while recording.
+  // TODO Level 1: while `recording`, `seconds` should climb by one every second;
+  //   the Record button toggles `recording` and reads "Stop" while recording.
+  //   When recording stops — or this tile unmounts — the clock must stop cleanly,
+  //   with no stray ticks left running.
   //
-  // TODO Level 3: when `seconds` reaches `maxSeconds`, stop recording and
-  //   leave the time pinned at maxSeconds (don't overshoot).
+  // TODO Level 3: when `seconds` reaches `maxSeconds`, stop recording on its own
+  //   and leave the time pinned at maxSeconds (don't overshoot).
   //
-  // TODO Level 4: "Snapshot" pushes the current `seconds` onto `snapshots`.
+  // TODO Level 4: "Snapshot" captures the current `seconds` into `snapshots`.
   //   It must be disabled while not recording.
 
   const label = formatTime(seconds);

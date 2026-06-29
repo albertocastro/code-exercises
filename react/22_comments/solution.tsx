@@ -17,6 +17,9 @@ export interface CommentTreeProps {
  * calls onReply(comment.id, text).
  */
 function CommentNode({ comment }: { comment: Comment; onReply?: CommentTreeProps["onReply"] }) {
+  // TODO Level 1: render comment.text, then RECURSIVELY render comment.replies
+  //   (each as a <CommentNode>) inside a <ul className="comment-children"> so the
+  //   whole nested tree appears.
   // TODO Level 2: a collapse/expand button (only for comments with replies)
   //   that hides/shows the nested replies.
   // TODO Level 3: a "Reply" button that reveals a reply box; Submit calls
@@ -24,13 +27,7 @@ function CommentNode({ comment }: { comment: Comment; onReply?: CommentTreeProps
   return (
     <li className="comment">
       <div className="comment-text">{comment.text}</div>
-      {comment.replies?.length ? (
-        <ul className="comment-children">
-          {comment.replies.map((r) => (
-            <CommentNode key={r.id} comment={r} />
-          ))}
-        </ul>
-      ) : null}
+      {/* TODO Level 1: recursively render comment.replies here */}
     </li>
   );
 }

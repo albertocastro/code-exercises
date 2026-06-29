@@ -26,15 +26,39 @@ export function TodoList({ initialTodos = [] }: TodoListProps) {
     initialTodos.map((t, i) => ({ id: i, text: t, completed: false }))
   );
   const [text, setText] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
   const nextId = useRef(initialTodos.length);
 
   const add = (e: FormEvent) => {
     e.preventDefault();
-    // TODO Level 1: trim `text`, ignore empty, append a todo, clear the input.
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    setTodos((current) => [
+      ...current,
+      { id: nextId.current++, text: trimmed, completed: false },
+    ]);
+    setText("");
   };
-  // TODO Level 2: toggle a todo's `completed` flag from its checkbox.
-  // TODO Level 3: delete a todo from its "delete" button.
-  // TODO Level 4: filter (All/Active/Completed) and show the remaining count.
+  const toggleTodo = (id: number) => {
+    setTodos((current) =>
+      current.map((todo) =>
+        todo.id === id ? { ...todo, completed: !todo.completed } : todo
+      )
+    );
+  };
+
+  const deleteTodo = (id: number) => {
+    setTodos((current) => current.filter((todo) => todo.id !== id));
+  };
+
+  const visibleTodos = todos.filter((todo) => {
+    if (filter === "active") return !todo.completed;
+    if (filter === "completed") return todo.completed;
+    return true;
+  });
+
+  const remaining = todos.filter((todo) => !todo.completed).length;
 
   return (
     <div className="exercise-card">
@@ -47,10 +71,35 @@ export function TodoList({ initialTodos = [] }: TodoListProps) {
         />
         <button className="exercise-button" type="submit">Add</button>
       </form>
+      <div className="exercise-row">
+        <button className="exercise-button" type="button" onClick={() => setFilter("all")}>
+          All
+        </button>
+        <button className="exercise-button" type="button" onClick={() => setFilter("active")}>
+          Active
+        </button>
+        <button className="exercise-button" type="button" onClick={() => setFilter("completed")}>
+          Completed
+        </button>
+        <span data-testid="remaining">{remaining}</span>
+      </div>
       <ul className="exercise-list">
-        {todos.map((td) => (
+        {visibleTodos.map((td) => (
           <li className="exercise-list-item" key={td.id} data-completed={td.completed}>
+            <input
+              type="checkbox"
+              checked={td.completed}
+              onChange={() => toggleTodo(td.id)}
+            />
             <span>{td.text}</span>
+            <button
+              className="exercise-button"
+              type="button"
+              aria-label={`delete ${td.text}`}
+              onClick={() => deleteTodo(td.id)}
+            >
+              Delete
+            </button>
           </li>
         ))}
       </ul>

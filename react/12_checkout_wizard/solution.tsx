@@ -54,16 +54,12 @@ export function CheckoutWizard({ onComplete }: WizardProps) {
       )}
       {step === 2 && <div data-testid="review" />}
 
+      {/* TODO Level 1: wire Back/Next to move between steps with setStep
+          (Back hidden on the first step; the last step shows "Complete"). */}
       <div className="exercise-row">
-        {step > 0 && (
-          <button className="exercise-button" onClick={() => setStep((s) => s - 1)}>
-            Back
-          </button>
-        )}
+        {step > 0 && <button className="exercise-button">Back</button>}
         {step < STEPS.length - 1 ? (
-          <button className="exercise-button" onClick={() => setStep((s) => s + 1)}>
-            Next
-          </button>
+          <button className="exercise-button">Next</button>
         ) : (
           <button className="exercise-button">Complete</button>
         )}

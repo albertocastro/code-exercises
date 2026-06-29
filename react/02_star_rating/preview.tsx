@@ -3,6 +3,7 @@ import { StarRating } from "./solution";
 
 export default function Demo() {
   const [v, setV] = useState(0);
+
   return (
     <div className="exercise-demo">
       <div className="exercise-title">

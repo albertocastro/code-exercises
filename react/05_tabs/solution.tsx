@@ -22,9 +22,12 @@ export interface TabsProps {
 export function Tabs({ tabs, defaultIndex = 0 }: TabsProps) {
   const [active, setActive] = useState(defaultIndex);
 
-  // TODO Level 1: clicking a trigger activates it; show only the active panel.
-  // TODO Level 2: add role="tablist"/"tab"/"tabpanel" + aria-selected.
+  // TODO Level 1: render a trigger per tab — <button className="exercise-tab">{label}</button> —
+  //   inside the tablist; clicking one makes it active (track with `active`/`setActive`).
+  //   Show ONLY the active tab's content in the panel. `defaultIndex` sets the initial tab.
+  // TODO Level 2: add role="tablist"/"tab"/"tabpanel" + aria-selected on the active tab.
   // TODO Level 3: ArrowLeft/ArrowRight (wrapping) and Home/End on the tablist.
+  // (className hints are only for the styled preview; the tests check text + roles, not classes.)
   const onKeyDown = (_e: KeyboardEvent) => {
     // TODO Level 3
   };
@@ -32,13 +35,9 @@ export function Tabs({ tabs, defaultIndex = 0 }: TabsProps) {
   return (
     <div className="exercise-tabs">
       <div className="exercise-tablist" onKeyDown={onKeyDown}>
-        {tabs.map((t, i) => (
-          <button className="exercise-tab" key={i} onClick={() => setActive(i)}>
-            {t.label}
-          </button>
-        ))}
+        {/* TODO Level 1: render a <button className="exercise-tab"> per tab here */}
       </div>
-      <div className="exercise-panel">{tabs[active].content}</div>
+      <div className="exercise-panel">{/* TODO Level 1: render the active tab's content */}</div>
     </div>
   );
 }

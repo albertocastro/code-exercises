@@ -1,17 +1,30 @@
 # React 26 — Security Camera Recorder
 
 **Estimated time:** 35–55 minutes
-**Goal:** Build a complete component from a mockup — `setInterval` timers with
-`useRef` + `useEffect` cleanup, conditional **overlay** layers with CSS
-positioning, a Flexbox control bar, and state shared across the UI.
+**Goal:** Turn a static camera tile into a working DVR — start/stop recording, a
+timer that ticks every second, a live REC indicator, an automatic cutoff, and
+snapshot capture.
 
-> This mirrors the Verkada frontend technical screen: translate a mockup into a
-> functional UI, lean on `useState` / `useEffect` / `useRef`, drive it with a
-> JavaScript timer, and compose the result from small, well-architected pieces.
+## What you're building
 
-You edit `solution.tsx`. *(Tests use fake timers.)* The static visual shell —
-the 16:9 feed, its overlay layers, and the control bar — is already laid out for
-you with CSS `position` and Flexbox; your job is the **behavior**.
+Picture a wall of camera feeds in a security operations center — the kind of
+surveillance dashboard Verkada, Nest, or Ring put in front of an operator. This
+is **one tile** from that wall: a single camera's live feed, plus the controls
+to record it.
+
+The operator hits **Record** to start rolling. An elapsed timer counts up second
+by second and a red **REC** light shows the feed is live. Recording stops on the
+same button — or automatically once the clip hits a maximum length, so a
+forgotten recording doesn't run forever. While it's rolling, the operator can
+grab **snapshots** — the current timestamp captured into a list — to flag a
+moment without scrubbing back through footage later.
+
+The static visual shell is already built for you: the 16:9 feed, its overlay
+layers, and the control bar are laid out with CSS `position` and Flexbox. **Your
+job is the behavior** — make the tile actually record.
+
+You edit `solution.tsx`. *(Tests drive the clock with fake timers, so no real
+second ever has to pass.)*
 
 ## The mockup
 
@@ -35,12 +48,16 @@ you with CSS `position` and Flexbox; your job is the **behavior**.
 - Prop `maxSeconds` — recording auto-stops at this many seconds.
 
 ## Levels
-1. **Record / stop** — clicking Record counts the time up once per second
-   (`setInterval`); the button reads **Stop** while recording and pauses the
-   clock. Keep the interval id in a `useRef` and clear it on stop / unmount.
-2. **REC overlay** — show the `rec-indicator` overlay only while recording;
-   remove it when stopped.
-3. **Auto-stop** — when the time reaches `maxSeconds`, stop recording on its own
-   and pin the time at `maxSeconds` (don't overshoot).
-4. **Snapshots** — while recording, **Snapshot** captures the current time into
-   the list; the button is disabled when not recording.
+1. **Record / stop** — Record starts the clock; it counts up once per second and
+   the button now reads **Stop**. Stop pauses it where it is. The clock must stop
+   *cleanly*: nothing should keep ticking after you stop, or after the tile is
+   removed from the screen.
+2. **REC indicator** — the `rec-indicator` overlay is visible only while
+   recording, and gone the moment you stop.
+3. **Auto-stop** — recording ends on its own once the elapsed time reaches
+   `maxSeconds`, and the displayed time stays pinned there (it must not tick past
+   the limit).
+4. **Snapshots** — while recording, **Snapshot** captures the current elapsed
+   time into the list; the button is disabled whenever you're not recording.
+</content>
+</invoke>

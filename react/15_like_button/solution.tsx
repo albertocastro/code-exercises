@@ -22,14 +22,10 @@ export function LikeButton({ initialLiked = false, initialCount = 0, toggleLike 
   //   the server call resolves.
   // TODO Level 3: if the call rejects, roll the change back.
   const onClick = async () => {
-    const next = !liked;
-    try {
-      await toggleLike(next);
-      setLiked(next);
-      setCount((c) => c + (next ? 1 : -1));
-    } catch {
-      /* TODO Level 3: handle failure */
-    }
+    // TODO Level 1: compute the next liked state, call toggleLike(next), then
+    //   update liked + count (count +1 when liking, -1 when unliking).
+    // TODO Level 2: update optimistically — reflect the change before awaiting.
+    // TODO Level 3: if toggleLike rejects, roll liked + count back.
   };
 
   return (

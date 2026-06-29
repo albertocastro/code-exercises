@@ -21,15 +21,9 @@ export function TagInput({ initialTags = [], maxTags, onChange }: TagInputProps)
   // TODO Level 2: a remove button per tag, and Backspace on an empty input
   //   removes the last tag.
   // TODO Level 3: ignore duplicates and empty/whitespace (trim); respect maxTags.
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (!text) return;
-      const next = [...tags, text];
-      setTags(next);
-      onChange?.(next);
-      setText("");
-    }
+  const onKey = (_e: KeyboardEvent) => {
+    // TODO Level 1: on Enter, add the trimmed text as a new tag, clear the input,
+    //   and call onChange with the new array (use `tags`/`setTags`/`text`/`setText`).
   };
 
   return (

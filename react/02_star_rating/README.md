@@ -43,7 +43,9 @@ Hovering a star previews that fill (`mouseEnter`). Moving the mouse away
 
 ## Level 3 — Controlled, readOnly, clear
 
+- `defaultValue` sets the initial rating for uncontrolled usage.
 - When `value` is provided the component is **controlled**: it shows `value` and
   fires `onChange` but does not change what it displays on its own.
-- `readOnly` disables all interaction.
+- `readOnly` disables all interaction: clicks do not change the rating, clicks
+  do not fire `onChange`, and hover does not preview a different fill.
 - Clicking the current rating again **clears** it to `0`.

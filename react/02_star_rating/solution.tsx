@@ -22,7 +22,8 @@ export function StarRating(props: StarRatingProps) {
   // TODO Level 1: render `max` star buttons; clicking star N fills 1..N.
   // TODO Level 2: previewing on hover (mouseEnter), restoring on mouseLeave.
   // TODO Level 3: support controlled `value` + `onChange`, `readOnly`,
-  //   and clearing by clicking the current rating again.
+  //   `defaultValue`, and clearing by clicking the current rating again.
+  //   When readOnly is true, clicks and hover previews should be ignored.
 
   return (
     <div className="exercise-stars" role="radiogroup" aria-label="rating">

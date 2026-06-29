@@ -12,16 +12,14 @@ export function TicTacToe() {
   const [board, setBoard] = useState<Mark[]>(Array(9).fill(null));
   const [xNext, setXNext] = useState(true);
 
+  // TODO Level 1: clicking an empty cell places the current player's mark and
+  //   alternates the turn (update `board`/`xNext`); a taken cell is ignored.
   // TODO Level 2: detect a winner ("Winner: X"/"Winner: O") and stop further moves.
   // TODO Level 3: detect a draw ("Draw") and add a Reset button.
   const status = `Turn: ${xNext ? "X" : "O"}`;
 
-  const play = (i: number) => {
-    if (board[i]) return;
-    const b = [...board];
-    b[i] = xNext ? "X" : "O";
-    setBoard(b);
-    setXNext((x) => !x);
+  const play = (_i: number) => {
+    // TODO Level 1
   };
 
   return (

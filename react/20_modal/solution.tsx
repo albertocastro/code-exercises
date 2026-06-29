@@ -15,23 +15,16 @@ export interface ModalProps {
  * close button named "close", and a ".modal-backdrop" wrapper.
  */
 export function Modal({ open, onClose, title, children }: ModalProps) {
+  // TODO Level 1: render nothing when `open` is false. When open, createPortal into
+  //   document.body a <div className="modal-backdrop"> wrapping a
+  //   <div className="modal" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
+  //   that contains <h2>{title}</h2>, `children`, and a
+  //   <button className="exercise-button" aria-label="close">.
   // TODO Level 2: close on Escape, the close button, and a backdrop click
   //   (but NOT a click inside the dialog).
   // TODO Level 3: move focus into the dialog when it opens, and restore focus
   //   to the previously-focused element when it closes.
+  // (className hints are only for the styled preview; the tests check roles + names, not classes.)
 
-  if (!open) return null;
-
-  return createPortal(
-    <div className="modal-backdrop">
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
-        <h2>{title}</h2>
-        {children}
-        <button className="exercise-button" aria-label="close">
-          ×
-        </button>
-      </div>
-    </div>,
-    document.body
-  );
+  return null;
 }

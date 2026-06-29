@@ -70,6 +70,11 @@ level(2, "hover preview", () => {
 
 // ── Level 3: Controlled / readOnly / clear ──────────────────────────────────
 level(3, "controlled, readOnly, clear", () => {
+  test("defaultValue sets the uncontrolled initial fill", () => {
+    render(<StarRating defaultValue={4} />);
+    expect(filled()).toBe(4);
+  });
+
   test("controlled `value` drives the fill", () => {
     render(<StarRating value={3} onChange={() => {}} />);
     expect(filled()).toBe(3);
@@ -83,12 +88,27 @@ level(3, "controlled, readOnly, clear", () => {
     expect(filled()).toBe(3); // parent never updated `value`
   });
 
-  test("readOnly ignores interaction", () => {
+  test("readOnly ignores click and hover interaction", () => {
     const onChange = vi.fn();
     render(<StarRating value={2} readOnly onChange={onChange} />);
+
+    fireEvent.mouseEnter(star(5));
+    expect(filled()).toBe(2);
+
     fireEvent.click(star(4));
     expect(onChange).not.toHaveBeenCalled();
     expect(filled()).toBe(2);
+
+    fireEvent.mouseLeave(star(5));
+    expect(filled()).toBe(2);
+  });
+
+  test("readOnly does not clear the current rating", () => {
+    const onChange = vi.fn();
+    render(<StarRating value={3} readOnly onChange={onChange} />);
+    fireEvent.click(star(3));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(filled()).toBe(3);
   });
 
   test("clicking the current rating clears it", () => {

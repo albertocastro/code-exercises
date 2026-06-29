@@ -21,12 +21,14 @@ export function Accordion({
 
 export function AccordionItem({ title, children }: { title: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  // TODO Level 1: clicking the header toggles `open`; reflect it in aria-expanded
+  //   and render the panel (role="region") with `children` only when open.
   return (
     <div className="accordion-item">
-      <button className="accordion-header" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button className="accordion-header" aria-expanded={false}>
         {title}
       </button>
-      {open && <div role="region">{children}</div>}
+      {/* TODO Level 1: render the panel here when open */}
     </div>
   );
 }
