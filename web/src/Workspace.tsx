@@ -50,7 +50,9 @@ type QualityScoreState =
   | { status: "idle" | "loading" }
   | { status: "done"; score: CodeQualityScore }
   | { status: "error"; error: string };
-type QualityScoreScope = "exercise";
+// "exercise" aggregates the whole exercise on the final summary; `level-N`
+// scores an individual level so the tutor + score show on every submit/resubmit.
+type QualityScoreScope = "exercise" | `level-${number}`;
 const LAYOUT_KEY = "code-exercises-layout";
 const EXECUTION_DEBOUNCE_MS = 800;
 const SELF_IMPORT_RE =
@@ -243,14 +245,15 @@ export function Workspace({
     if (isGreen) {
       timer.stop();
       setProg(markPassed(key, level));
-      // Pre-warm the quality score the instant the final level passes — before the
-      // user clicks Submit and opens the panel. The agent round-trip then runs in
-      // the background, so the completion panel usually shows a ready score instead
-      // of a spinner. ensureQualityScore dedupes by solution hash, so the Submit
-      // call reuses this result when the code is unchanged.
-      if (level === exercise.levels) {
-        void ensureQualityScore(level, { scope: "exercise" });
-      }
+      // Pre-warm the quality score the instant tests pass — before the user clicks
+      // Submit and opens the panel. The agent round-trip then runs in the
+      // background, so the panel usually shows a ready score instead of a spinner.
+      // ensureQualityScore dedupes by solution hash, so the Submit call reuses this
+      // result when the code is unchanged. Final level rolls up to the exercise
+      // scope; earlier levels pre-warm their per-level score.
+      void ensureQualityScore(level, {
+        scope: level === exercise.levels ? "exercise" : `level-${level}`,
+      });
     }
   };
   const onConsole: ConsoleSink = (entry) => {
@@ -277,16 +280,17 @@ export function Workspace({
     // Don't auto-advance: celebrate and open the insights panel instead.
     celebrate(level === exercise.levels);
     setInsightsLevel(level);
-    if (completesExercise) {
-      void ensureQualityScore(level, { scope: "exercise" });
-    }
+    // Score every submit/resubmit: the completing level rolls up to the whole
+    // exercise; earlier levels score per-level so the tutor + score panel works
+    // mid-exercise too.
+    void ensureQualityScore(level, { scope: completesExercise ? "exercise" : `level-${level}` });
   };
 
   const openSummary = (targetLevel: number) => {
     setInsightsLevel(targetLevel);
-    if (complete && targetLevel === finalSummaryLevel) {
-      void ensureQualityScore(targetLevel, { scope: "exercise" });
-    }
+    const scope: QualityScoreScope =
+      complete && targetLevel === finalSummaryLevel ? "exercise" : `level-${targetLevel}`;
+    void ensureQualityScore(targetLevel, { scope });
   };
 
   const ensureQualityScore = async (
@@ -445,6 +449,15 @@ export function Workspace({
   // while you redo the exercise with the completion modal closed.
   const exerciseScore = qualityScoreForScope("exercise");
   const retakeScore = exerciseScore.status === "done" ? exerciseScore.score : null;
+
+  // Which score scope the open insights panel reflects: the final summary rolls up
+  // the whole exercise; any other open level shows its own per-level score. The AI
+  // tutor + score only make sense once a level has been submitted at least once.
+  const insightsScope: QualityScoreScope =
+    insightsLevel !== null && complete && insightsLevel === finalSummaryLevel
+      ? "exercise"
+      : `level-${insightsLevel ?? 0}`;
+  const insightsSubmitted = insightsLevel !== null && !!prog.levels[insightsLevel]?.submittedAt;
   const readmeBody = (
     <>
       <div className="panel-head">README</div>
@@ -785,11 +798,11 @@ export function Workspace({
           solutionCode={code}
           readme={files.readme}
           stat={prog.levels[insightsLevel]}
-          qualityScore={complete && insightsLevel === finalSummaryLevel ? qualityScoreForScope("exercise") : { status: "idle" }}
+          qualityScore={insightsSubmitted ? qualityScoreForScope(insightsScope) : { status: "idle" }}
           complete={prog.unlockedLevel > exercise.levels}
-          storageKey={complete && insightsLevel === finalSummaryLevel ? `${key}/exercise` : `${key}/level-${insightsLevel}`}
-          showAiReview={complete && insightsLevel === finalSummaryLevel}
-          onToggleClaim={(text) => toggleActionItemClaim("exercise", text)}
+          storageKey={`${key}/${insightsScope}`}
+          showAiReview={insightsSubmitted}
+          onToggleClaim={(text) => toggleActionItemClaim(insightsScope, text)}
           onNext={() => {
             const next = insightsLevel + 1;
             setInsightsLevel(null);
