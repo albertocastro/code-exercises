@@ -66,10 +66,12 @@ class ErrorBoundary extends Component<
 export function PreviewPanel({
   previewCode,
   solutionCode,
+  standaloneUrl,
   onConsole,
 }: {
   previewCode: string;
   solutionCode: string;
+  standaloneUrl?: string;
   onConsole?: ConsoleSink;
 }) {
   const [Demo, setDemo] = useState<ComponentType | null>(null);
@@ -150,6 +152,11 @@ export function PreviewPanel({
         <button className="run-btn" title="Refresh preview" onClick={() => setRefresh((n) => n + 1)}>
           ↻ Refresh
         </button>
+        {standaloneUrl ? (
+          <a className="run-btn" href={standaloneUrl} target="_blank" rel="noreferrer">
+            Open standalone
+          </a>
+        ) : null}
         <input
           className="url-input"
           aria-label="Preview URL"

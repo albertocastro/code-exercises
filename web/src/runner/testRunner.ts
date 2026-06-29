@@ -8,6 +8,7 @@ export interface TestRow {
   name: string;
   status: "pass" | "fail" | "skip";
   error?: string;
+  line?: number;
 }
 export interface RunResult {
   rows: TestRow[];
@@ -18,6 +19,9 @@ export interface RunResult {
 }
 
 type Fn = () => void | Promise<void>;
+const SELF_IMPORT_RE =
+  /(?:from\s+["']|require\(\s*["'])(?:\.\/|\/)solution(?:\.[tj]sx?)?["']/;
+
 interface DescribeNode {
   kind: "describe";
   name: string;
@@ -31,6 +35,7 @@ interface TestNode {
   name: string;
   skip: boolean;
   fn: Fn;
+  line?: number;
 }
 type Node = DescribeNode | TestNode;
 
@@ -68,11 +73,17 @@ function createHarness() {
     skipping = prev;
   };
 
+  function getCallerLine(): number | undefined {
+    const stack = new Error().stack ?? "";
+    const match = stack.match(/<anonymous>:(\d+):\d+/g)?.at(-1)?.match(/:(\d+):\d+/);
+    return match ? Number(match[1]) : undefined;
+  }
+
   function test(name: string, fn: Fn) {
-    current.children.push({ kind: "test", name, skip: skipping, fn });
+    current.children.push({ kind: "test", name, skip: skipping, fn, line: getCallerLine() });
   }
   test.skip = (name: string, fn: Fn) =>
-    current.children.push({ kind: "test", name, skip: true, fn });
+    current.children.push({ kind: "test", name, skip: true, fn, line: getCallerLine() });
 
   const beforeEach = (fn: Fn) => current.beforeEach.push(fn);
   const afterEach = (fn: Fn) => current.afterEach.push(fn);
@@ -93,18 +104,19 @@ async function runTree(root: DescribeNode): Promise<RunResult> {
       if (child.kind === "describe") {
         await walk(child, b, a);
       } else if (child.skip) {
-        rows.push({ name: child.name, status: "skip" });
+        rows.push({ name: child.name, status: "skip", line: child.line });
       } else {
         try {
           for (const fn of b) await fn();
           await child.fn();
-          rows.push({ name: child.name, status: "pass" });
+          rows.push({ name: child.name, status: "pass", line: child.line });
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           rows.push({
             name: child.name,
             status: "fail",
             error: msg.split("\n").slice(0, 8).join("\n"),
+            line: child.line,
           });
         } finally {
           for (const fn of a) {
@@ -137,6 +149,17 @@ export async function runExercise(
   onConsole?: ConsoleSink
 ): Promise<RunResult> {
   const capturedConsole = makeCapturedConsole("tests", onConsole);
+  if (SELF_IMPORT_RE.test(solutionCode)) {
+    return {
+      rows: [],
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      compileError:
+        "solution.tsx — solution code cannot import ./solution. Reset this exercise if solution.tsx is showing test or preview code.",
+    };
+  }
+
   let solutionExports: Record<string, unknown>;
   try {
     solutionExports = evalModule(transpile(solutionCode), makeRequire(), {

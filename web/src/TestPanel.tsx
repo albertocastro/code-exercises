@@ -2,18 +2,27 @@ import { useEffect, useState } from "react";
 import { runExercise, type RunResult } from "./runner/testRunner";
 import type { ConsoleSink } from "./runner/consoleCapture";
 
+function findTestLine(testCode: string, name: string): number | undefined {
+  const lines = testCode.split("\n");
+  const quoted = [`test("${name}"`, `test('${name}'`, `it("${name}"`, `it('${name}'`];
+  const index = lines.findIndex((line) => quoted.some((needle) => line.includes(needle)));
+  return index >= 0 ? index + 1 : undefined;
+}
+
 export function TestPanel({
   testCode,
   solutionCode,
   level,
   onResult,
   onConsole,
+  onOpenTest,
 }: {
   testCode: string;
   solutionCode: string;
   level: number;
   onResult?: (r: RunResult) => void;
   onConsole?: ConsoleSink;
+  onOpenTest?: (line?: number) => void;
 }) {
   const [result, setResult] = useState<RunResult | null>(null);
   const [running, setRunning] = useState(true);
@@ -63,13 +72,19 @@ export function TestPanel({
           result.rows
             .filter((r) => r.status !== "skip")
             .map((r, i) => (
-              <div key={i} className={`test-row ${r.status}`}>
+              <button
+                key={i}
+                type="button"
+                className={`test-row ${r.status}`}
+                onClick={() => onOpenTest?.(findTestLine(testCode, r.name) ?? r.line)}
+                title="Open this test"
+              >
                 <span className="mark">{r.status === "pass" ? "✓" : "✗"}</span>
                 <div className="test-text">
                   <div className="test-name">{r.name}</div>
                   {r.error && <pre className="test-err">{r.error}</pre>}
                 </div>
-              </div>
+              </button>
             ))}
       </div>
     </div>

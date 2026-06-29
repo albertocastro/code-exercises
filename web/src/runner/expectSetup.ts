@@ -129,6 +129,11 @@ class Assertion {
     const pass = !!el && (el.disabled === true || el.hasAttribute("disabled") || el.getAttribute("aria-disabled") === "true");
     this.check(pass, `expected element to be disabled`);
   }
+  toBeEnabled() {
+    const el = this.el;
+    const disabled = !!el && (el.disabled === true || el.hasAttribute("disabled") || el.getAttribute("aria-disabled") === "true");
+    this.check(!!el && !disabled, `expected element to be enabled`);
+  }
   toBeChecked() {
     const el = this.el;
     const role = el?.getAttribute("role");

@@ -16,9 +16,21 @@ const REGISTRY: Record<string, unknown> = {
   "@testing-library/user-event": userEvent,
 };
 
+function normalizeLocalModuleName(name: string): string {
+  return name.replace(/\.(tsx?|jsx?)$/, "").replace(/^\.\//, "/");
+}
+
 export function makeRequire(locals: Record<string, unknown> = {}) {
+  const normalizedLocals = new Map<string, unknown>();
+  for (const [name, value] of Object.entries(locals)) {
+    normalizedLocals.set(name, value);
+    normalizedLocals.set(normalizeLocalModuleName(name), value);
+  }
+
   return (name: string) => {
     if (name in locals) return locals[name];
+    const normalizedName = normalizeLocalModuleName(name);
+    if (normalizedLocals.has(normalizedName)) return normalizedLocals.get(normalizedName);
     if (name in REGISTRY) return REGISTRY[name];
     throw new Error(`Module not available in the exercise sandbox: "${name}"`);
   };
