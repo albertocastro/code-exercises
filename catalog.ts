@@ -71,6 +71,7 @@ export const CATALOG: CategoryMeta[] = [
       { id: "24_transfer_list", name: "Transfer List", levels: 3, topic: "Selection state and dual-list coordination" },
       { id: "25_stopwatch", name: "Stopwatch", levels: 3, topic: "Timers, effects, and cleanup" },
       { id: "26_camera_recorder", name: "Security Camera Recorder", levels: 4, topic: "Timers, refs, overlay positioning, and component state from a mockup" },
+      { id: "27_camera_wall", name: "Security Camera Wall", levels: 4, topic: "Camera grid layout, shared selection, and per-tile recording state" },
     ],
   },
 ];
