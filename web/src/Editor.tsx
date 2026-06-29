@@ -2,6 +2,7 @@ import { useEffect, useRef, type ComponentProps } from "react";
 import MonacoEditor, { type Monaco } from "@monaco-editor/react";
 import { installHighlighting } from "./monaco-setup";
 import { installTypeLibraries } from "./monaco-type-libs";
+import { installAutoImports } from "./autoImports";
 
 export function CodeEditor({
   path,
@@ -44,6 +45,10 @@ export function CodeEditor({
       noSyntaxValidation: false,
     });
     installTypeLibraries(monaco);
+    // VS Code-style auto-imports: completion items + "Add import" quick-fixes for
+    // well-known module exports (React hooks/types, react-dom) that aren't yet in
+    // scope. Accepting either merges the symbol into the existing import statement.
+    installAutoImports(monaco);
     // Apply Shiki TextMate highlighting (VS Code grammars) for real JSX colors.
     installHighlighting(monaco)
       .then(() => monaco.editor.setTheme("dark-plus"))
