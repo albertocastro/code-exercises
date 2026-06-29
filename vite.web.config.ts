@@ -79,7 +79,10 @@ function buildReviewPrompt(p: ReviewPayload, ext: string) {
     return (
       `You are a patient programming tutor reviewing the solution below for this coding exercise. ` +
       `Your main goal is to teach the learner how to reason about ` +
-      `their code, not merely correct it or optimize it. Give a short review for level ${p.level}: ` +
+      `their code, not merely correct it or optimize it. Give a short review for level ${p.level}. ` +
+      `The learner is working through the exercise incrementally and is only expected to have ` +
+      `implemented levels 1 through ${p.level} so far; treat anything described for higher levels as ` +
+      `out of scope, not as a mistake or a missing piece. Cover ` +
       `what they did well, the key concept involved, time/space complexity when relevant, and one ` +
       `or two directional next steps. Ask a guiding question if it would help. Do not rewrite the ` +
       `solution or paste a full answer unless explicitly asked. Max 6 short bullet points.` +
@@ -129,9 +132,19 @@ function buildScorePrompt(p: ReviewPayload, ext: string) {
         `Fill "title", "summary", optional "verdict" ("healthy" | "watch" | "risky" | "unknown"), and "bullets" ` +
         `with up to 2 short observations about rerender churn, derived state, effect loops, unstable handlers, or unnecessary work.`;
 
+  const currentLevel = p.level ?? "unknown";
+
   return (
     `You are scoring the code quality of the solution below for a coding exercise. ` +
-    `Evaluate the current solution for correctness against the spec, ` +
+    `The learner is working through the exercise INCREMENTALLY, one level at a time, and is ` +
+    `currently on level ${currentLevel}. The README's "Levels" section lists the levels as a ` +
+    `numbered list, where item n describes the requirements introduced at level n. ` +
+    `Evaluate ONLY the requirements for levels 1 through ${currentLevel} (inclusive). ` +
+    `Any functionality described for levels ABOVE ${currentLevel} is OUT OF SCOPE and is not ` +
+    `expected to exist yet: its absence, incompleteness, or stubbed/placeholder state must NOT ` +
+    `lower the score and must NOT be reported as a weakness, improvement, study topic, or action item. ` +
+    `(When the current level is the last level, this naturally means the entire spec is in scope.) ` +
+    `Within that in-scope range, evaluate the solution for correctness against the spec, ` +
     `clarity, React/state or algorithmic design as relevant, type safety, accessibility when relevant, ` +
     `edge cases, and maintainability. Be fair: passing tests is good, but hidden contract issues, brittle ` +
     `state, poor naming, missing controlled-component behavior, or avoidable complexity should lower the score.\n\n` +
@@ -163,7 +176,10 @@ function buildScorePrompt(p: ReviewPayload, ext: string) {
     `drop items that are no longer relevant, and add new ones only if necessary. ` +
     `${categoryAnalysis} ` +
     `Each action item note should be one short sentence explaining why it still matters or acknowledging progress. ` +
-    `Level: ${p.level ?? "unknown"}.` +
+    `Every part of the response — score, summary, strengths, improvements, study plan, action items, and analysis — ` +
+    `must reflect ONLY levels 1 through ${currentLevel}. ` +
+    `Reminder: the learner is on level ${currentLevel}; judge only levels 1 through ${currentLevel} and treat ` +
+    `any higher levels as not yet expected (no penalty for unimplemented future levels).` +
     inlineContext(p, ext)
   );
 }
