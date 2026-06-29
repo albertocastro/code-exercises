@@ -69,6 +69,7 @@ export const CATALOG: CategoryMeta[] = [
       { id: "23_virtual_list", name: "Virtualized List", levels: 3 },
       { id: "24_transfer_list", name: "Transfer List", levels: 3 },
       { id: "25_stopwatch", name: "Stopwatch", levels: 3 },
+      { id: "26_camera_recorder", name: "Security Camera Recorder", levels: 4 },
     ],
   },
 ];
