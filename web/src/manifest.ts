@@ -1,7 +1,7 @@
 // Build-time raw import of every exercise file, so the browser IDE can load the
 // real stubs, tests, READMEs, and preview demos straight from the repo.
 const RAW = {
-  ...import.meta.glob("../../react/*/*.{tsx,ts,md}", {
+  ...import.meta.glob("../../react/*/*.{tsx,ts,md,css}", {
     query: "?raw",
     import: "default",
     eager: true,
@@ -27,11 +27,14 @@ export interface ExerciseFiles {
   previewPath?: string;
   previewCode?: string;
   perfCode?: string; // optional Tier-1 complexity spec (perf.ts)
+  stylesPath?: string; // optional learner-editable CSS (styles.css)
+  stylesCode?: string;
 }
 
 export function loadExercise(categoryId: string, exerciseId: string): ExerciseFiles {
   if (categoryId === "react") {
     const base = `/react/${exerciseId}/`;
+    const stylesCode = get(`${base}styles.css`);
     return {
       readme: get(`${base}README.md`) ?? "",
       solutionPath: "/solution.tsx",
@@ -40,6 +43,7 @@ export function loadExercise(categoryId: string, exerciseId: string): ExerciseFi
       testCode: get(`${base}solution.test.tsx`) ?? "",
       previewPath: "/preview.tsx",
       previewCode: get(`${base}preview.tsx`),
+      ...(stylesCode !== undefined ? { stylesPath: "/styles.css", stylesCode } : {}),
     };
   }
   const base = `/${exerciseId}/`;

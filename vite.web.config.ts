@@ -1,7 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { spawn } from "child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
 import { tmpdir } from "os";
 import * as path from "path";
@@ -312,10 +312,88 @@ function runAgent(p: ReviewPayload, ext: string, prompt: string, outputFile: str
   });
 }
 
+// Real per-exercise Node backends. An exercise that needs a REST server ships a
+// `backend.ts` exporting `handle({ method, path, query, body })`. This plugin
+// mounts each one at `/api/ex/<id>/*` (where <id> is the folder's numeric prefix,
+// e.g. 28 → react/28_camera_grid). The learner's component then calls real
+// `fetch("/api/ex/28/cameras")`. Loaded via ssrLoadModule so the TS compiles and
+// hot-reloads. Dev-only (no Node in the static build), like the AI endpoints.
+type BackendResult = { status?: number; json?: unknown; text?: string };
+type BackendModule = {
+  handle: (req: {
+    method: string;
+    path: string;
+    query: URLSearchParams;
+    body: unknown;
+  }) => BackendResult | Promise<BackendResult>;
+};
+
+function exerciseBackendBridge(): Plugin {
+  const reactDir = path.resolve(__dirname, "react");
+  // id (numeric prefix) -> absolute path to its backend.ts
+  const backends = new Map<string, string>();
+  if (existsSync(reactDir)) {
+    for (const name of readdirSync(reactDir)) {
+      const file = path.join(reactDir, name, "backend.ts");
+      if (existsSync(file)) backends.set(name.split("_")[0], file);
+    }
+  }
+
+  return {
+    name: "exercise-backend-bridge",
+    configureServer(server) {
+      server.middlewares.use("/api/ex/", (req, res) => {
+        // req.url here is relative to /api/ex/ → "<id>/<path>?<query>"
+        const raw = req.url ?? "";
+        const url = new URL(raw, "http://localhost");
+        const [, id, ...rest] = url.pathname.split("/"); // ["", id, ...path]
+        const file = backends.get(id);
+        if (!file) {
+          res.statusCode = 404;
+          return res.end(JSON.stringify({ error: `No backend for exercise ${id}` }));
+        }
+
+        let body = "";
+        req.on("data", (c) => (body += c));
+        req.on("end", async () => {
+          let parsed: unknown = undefined;
+          if (body) {
+            try {
+              parsed = JSON.parse(body);
+            } catch {
+              parsed = body;
+            }
+          }
+          try {
+            const mod = (await server.ssrLoadModule(file)) as BackendModule;
+            const result = await mod.handle({
+              method: req.method ?? "GET",
+              path: "/" + rest.join("/"),
+              query: url.searchParams,
+              body: parsed,
+            });
+            res.statusCode = result.status ?? 200;
+            if (result.json !== undefined) {
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify(result.json));
+            } else {
+              res.end(result.text ?? "");
+            }
+          } catch (e) {
+            res.statusCode = 500;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: (e as Error).message }));
+          }
+        });
+      });
+    },
+  };
+}
+
 // Dev/build config for the browser IDE (web/). Separate from vite.config.ts,
 // which serves the lightweight component preview used by the CLI.
 export default defineConfig({
-  plugins: [react(), reviewBridge()],
+  plugins: [react(), reviewBridge(), exerciseBackendBridge()],
   root: path.resolve(__dirname, "web"),
   // Pre-bundle the heavy deps at startup so entering the workspace doesn't
   // trigger a mid-session re-optimization (which 504s in-flight Monaco chunks).

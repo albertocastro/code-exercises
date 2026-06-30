@@ -95,6 +95,10 @@ export function Workspace({
   const [previewCode, setPreviewCode] = useState(
     () => getDraft(key, "preview") ?? files.previewCode ?? ""
   );
+  const hasStyles = categoryId === "react" && files.stylesCode !== undefined;
+  const [stylesCode, setStylesCode] = useState(
+    () => getDraft(key, "styles") ?? files.stylesCode ?? ""
+  );
   const [executionCode, setExecutionCode] = useState(code);
   const [activeFile, setActiveFile] = useState("solution");
   const [editorReveal, setEditorReveal] = useState<{ path: string; line: number; nonce: number } | null>(null);
@@ -153,6 +157,11 @@ export function Workspace({
       saveDraft(key, next, "preview");
       return;
     }
+    if (activeFile === "styles") {
+      setStylesCode(next);
+      saveDraft(key, next, "styles");
+      return;
+    }
     if (activeFile !== "solution") return;
 
     setCode(next);
@@ -190,6 +199,10 @@ export function Workspace({
     clearDraft(key, "preview", "Before preview reset");
     setPreviewCode(files.previewCode ?? "");
   };
+  const resetStyles = () => {
+    clearDraft(key, "styles", "Before styles reset");
+    setStylesCode(files.stylesCode ?? "");
+  };
   const resetWholeExercise = () => {
     if (!confirm("Reset this exercise? This deletes its draft and progress, then returns to level 1.")) {
       return;
@@ -197,9 +210,11 @@ export function Workspace({
 
     clearDraft(key, "solution", "Before exercise reset");
     clearDraft(key, "preview", "Before exercise reset");
+    clearDraft(key, "styles", "Before exercise reset");
     setCode(files.solutionCode);
     setExecutionCode(files.solutionCode);
     setPreviewCode(files.previewCode ?? "");
+    setStylesCode(files.stylesCode ?? "");
     setProg(resetExercise(key));
     setGreen(false);
     setHint(null);
@@ -485,6 +500,7 @@ export function Workspace({
     test: { path: files.testPath, code: files.testCode, ro: true },
   };
   if (files.previewCode) openFiles.preview = { path: "/preview.tsx", code: previewCode, ro: false };
+  if (hasStyles) openFiles.styles = { path: "/styles.css", code: stylesCode, ro: false };
   if (files.perfCode) openFiles.perf = { path: "/perf.ts", code: files.perfCode, ro: true };
   const af = openFiles[activeFile] ?? openFiles.solution;
 
@@ -492,6 +508,7 @@ export function Workspace({
     { id: "solution", name: files.solutionPath.slice(1), readOnly: false },
     { id: "test", name: files.testPath.slice(1), readOnly: true },
     ...(files.previewCode ? [{ id: "preview", name: "preview.tsx", readOnly: false }] : []),
+    ...(hasStyles ? [{ id: "styles", name: "styles.css", readOnly: false }] : []),
     ...(files.perfCode ? [{ id: "perf", name: "perf.ts", readOnly: true }] : []),
   ];
 
@@ -527,6 +544,7 @@ export function Workspace({
     <TestPanel
       testCode={files.testCode}
       solutionCode={executionCode}
+      stylesCode={hasStyles ? stylesCode : undefined}
       level={level}
       onResult={onResult}
       onConsole={onConsole}
@@ -537,6 +555,7 @@ export function Workspace({
     <PreviewPanel
       previewCode={previewCode}
       solutionCode={executionCode}
+      stylesCode={hasStyles ? stylesCode : undefined}
       standaloneUrl={`/preview/${categoryId}/${exercise.id}`}
       onConsole={onConsole}
     />
@@ -682,6 +701,12 @@ export function Workspace({
           {hasPreview && (
             <button className="reset" title="Reset preview to starter" onClick={resetPreview}>
               reset preview
+            </button>
+          )}
+
+          {hasStyles && (
+            <button className="reset" title="Reset styles.css to starter" onClick={resetStyles}>
+              reset styles
             </button>
           )}
 

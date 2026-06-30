@@ -7,15 +7,16 @@ import { makeCapturedConsole, type ConsoleSink } from "./consoleCapture";
 export function compilePreview(
   previewCode: string,
   solutionCode: string,
-  onConsole?: ConsoleSink
+  onConsole?: ConsoleSink,
+  stylesCode?: string
 ): ComponentType {
   const capturedConsole = makeCapturedConsole("preview", onConsole);
-  const solutionExports = evalModule(transpile(solutionCode), makeRequire(), {
+  const solutionExports = evalModule(transpile(solutionCode), makeRequire({}, stylesCode), {
     console: capturedConsole,
   });
   const previewExports = evalModule(
     transpile(previewCode),
-    makeRequire({ "./solution": solutionExports }),
+    makeRequire({ "./solution": solutionExports }, stylesCode),
     { console: capturedConsole }
   );
   const Demo = previewExports.default as ComponentType | undefined;

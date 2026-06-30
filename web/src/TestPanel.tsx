@@ -12,6 +12,7 @@ function findTestLine(testCode: string, name: string): number | undefined {
 export function TestPanel({
   testCode,
   solutionCode,
+  stylesCode,
   level,
   onResult,
   onConsole,
@@ -19,6 +20,7 @@ export function TestPanel({
 }: {
   testCode: string;
   solutionCode: string;
+  stylesCode?: string;
   level: number;
   onResult?: (r: RunResult) => void;
   onConsole?: ConsoleSink;
@@ -33,7 +35,7 @@ export function TestPanel({
     setRunning(true);
     // Debounce so we don't recompile on every keystroke.
     const t = setTimeout(async () => {
-      const r = await runExercise(testCode, solutionCode, level, onConsole);
+      const r = await runExercise(testCode, solutionCode, level, onConsole, stylesCode);
       if (cancelled) return;
       setResult(r);
       setRunning(false);
@@ -44,7 +46,7 @@ export function TestPanel({
       clearTimeout(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [testCode, solutionCode, level, nonce]);
+  }, [testCode, solutionCode, stylesCode, level, nonce]);
 
   return (
     <div className="tests">

@@ -4,7 +4,7 @@ const PREFIX = "code-exercises-draft:";
 const HISTORY_PREFIX = "code-exercises-draft-history:";
 const MAX_HISTORY = 40;
 
-export type DraftFile = "solution" | "preview";
+export type DraftFile = "solution" | "preview" | "styles";
 
 export interface DraftSnapshot {
   id: string;

@@ -146,7 +146,8 @@ export async function runExercise(
   testCode: string,
   solutionCode: string,
   level: number,
-  onConsole?: ConsoleSink
+  onConsole?: ConsoleSink,
+  stylesCode?: string
 ): Promise<RunResult> {
   const capturedConsole = makeCapturedConsole("tests", onConsole);
   if (SELF_IMPORT_RE.test(solutionCode)) {
@@ -162,7 +163,7 @@ export async function runExercise(
 
   let solutionExports: Record<string, unknown>;
   try {
-    solutionExports = evalModule(transpile(solutionCode), makeRequire(), {
+    solutionExports = evalModule(transpile(solutionCode), makeRequire({}, stylesCode), {
       console: capturedConsole,
     });
   } catch (e) {

@@ -66,11 +66,13 @@ class ErrorBoundary extends Component<
 export function PreviewPanel({
   previewCode,
   solutionCode,
+  stylesCode,
   standaloneUrl,
   onConsole,
 }: {
   previewCode: string;
   solutionCode: string;
+  stylesCode?: string;
   standaloneUrl?: string;
   onConsole?: ConsoleSink;
 }) {
@@ -123,14 +125,14 @@ export function PreviewPanel({
 
   useEffect(() => {
     try {
-      const C = compilePreview(previewCode, solutionCode, onConsole);
+      const C = compilePreview(previewCode, solutionCode, onConsole, stylesCode);
       setDemo(() => C);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setDemo(null);
     }
-  }, [previewCode, solutionCode]);
+  }, [previewCode, solutionCode, stylesCode]);
 
   useEffect(() => {
     setDraftUrl(url);

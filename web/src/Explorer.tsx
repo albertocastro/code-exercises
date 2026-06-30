@@ -9,6 +9,7 @@ const ICON: Record<string, string> = {
   test: "✓",
   preview: "▦",
   perf: "⚡",
+  styles: "#",
 };
 
 export function Explorer({

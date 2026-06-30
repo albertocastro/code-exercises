@@ -20,7 +20,24 @@ function normalizeLocalModuleName(name: string): string {
   return name.replace(/\.(tsx?|jsx?)$/, "").replace(/^\.\//, "/");
 }
 
-export function makeRequire(locals: Record<string, unknown> = {}) {
+const STYLE_TAG_ID = "exercise-styles";
+
+// Apply the learner's styles.css by injecting (or updating) a single <style> tag
+// in the document head. Because the IDE renders exercises into a real (sandboxed)
+// DOM, this makes getComputedStyle reflect the learner's CSS — which is how the
+// CSS levels are graded deterministically. Idempotent: one tag, replaced in place.
+export function installCss(cssText: string) {
+  if (typeof document === "undefined") return;
+  let tag = document.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null;
+  if (!tag) {
+    tag = document.createElement("style");
+    tag.id = STYLE_TAG_ID;
+    document.head.appendChild(tag);
+  }
+  tag.textContent = cssText;
+}
+
+export function makeRequire(locals: Record<string, unknown> = {}, css?: string) {
   const normalizedLocals = new Map<string, unknown>();
   for (const [name, value] of Object.entries(locals)) {
     normalizedLocals.set(name, value);
@@ -28,6 +45,12 @@ export function makeRequire(locals: Record<string, unknown> = {}) {
   }
 
   return (name: string) => {
+    // `import "./styles.css"` is a side-effect import: inject the CSS and hand
+    // back an empty module so the learner can write plain `import "./styles.css"`.
+    if (name.endsWith(".css")) {
+      if (css !== undefined) installCss(css);
+      return {};
+    }
     if (name in locals) return locals[name];
     const normalizedName = normalizeLocalModuleName(name);
     if (normalizedLocals.has(normalizedName)) return normalizedLocals.get(normalizedName);

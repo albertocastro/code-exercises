@@ -1,0 +1,19 @@
+/* styles.css — imported by solution.tsx via `import "./styles.css"`.
+ *
+ * This is YOUR file. The grid and the overlays are unstyled until you write the
+ * rules below, and the CSS levels stay red until you do. The tests read
+ * getComputedStyle on the rendered DOM, so what you write here is graded for real.
+ *
+ * Level 1 — lay the cards out as a wrapping Flexbox grid:
+ *   .camera-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+ *
+ * Level 2 — make the thumbnail a positioning context and overlay the badges:
+ *   .camera-thumb { position: relative; }
+ *   .status-badge { position: absolute; top: 8px; left: 8px; }
+ *   .live-dot     { position: absolute; right: 8px; bottom: 8px; }
+ *
+ * Everything else (colors, sizing, the 16:9 thumbnail, selected outline) is up
+ * to you — match the mockup in the README. Suggested hooks you can style:
+ *   .camera-card, .camera-card.is-selected, .status-online, .status-offline,
+ *   .camera-meta, .camera-toolbar
+ */
