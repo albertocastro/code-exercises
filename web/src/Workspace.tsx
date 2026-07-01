@@ -29,7 +29,8 @@ import {
 } from "./progress";
 import { useTimer, fmtTime } from "./useTimer";
 import { runComplexity, type ComplexityResult } from "./runner/complexity";
-import type { RunResult } from "./runner/testRunner";
+import { runJavaExercise, runJavaMain } from "./runner/javaRunner";
+import { runExercise, type RunResult } from "./runner/testRunner";
 import type { ConsoleEntry, ConsoleSink } from "./runner/consoleCapture";
 import { formatCode } from "./formatCode";
 import {
@@ -46,6 +47,7 @@ import {
 type Layout = "split" | "columns";
 type DiagnosticsTab = "preview" | "tests" | "console";
 type DiagnosticsLayout = "single" | "split";
+type ExerciseLanguage = "typescript" | "java";
 type QualityScoreState =
   | { status: "idle" | "loading" }
   | { status: "done"; score: CodeQualityScore }
@@ -84,13 +86,30 @@ export function Workspace({
 }) {
   const hasPreview = categoryId === "react" && !!files.previewCode;
   const key = `${categoryId}/${exercise.id}`;
+  const hasJava = categoryId === "leetcode" && !!files.javaSolutionCode && !!files.javaTestCode;
+  const languageStorageKey = `code-exercises-language:${key}`;
+  const [language, setLanguage] = useState<ExerciseLanguage>(() =>
+    hasJava && localStorage.getItem(languageStorageKey) === "java" ? "java" : "typescript"
+  );
+  const solutionDraftKey = language === "java" ? `${key}/java` : key;
+  const scoreBaseKey = language === "java" ? `${key}/java` : key;
+  const currentSolutionPath = language === "java" ? files.javaSolutionPath ?? "/Solution.java" : files.solutionPath;
+  const currentSolutionStarter = language === "java" ? files.javaSolutionCode ?? "" : files.solutionCode;
+  const currentTestPath = language === "java" ? files.javaTestPath ?? "/SolutionTest.java" : files.testPath;
+  const currentTestCode = language === "java" ? files.javaTestCode ?? "" : files.testCode;
+  const currentMainPath = files.javaMainPath ?? "/Main.java";
+  const currentMainStarter = files.javaMainCode ?? "";
   const [code, setCode] = useState(() => {
-    const draft = getDraft(key);
-    if (!draft) return files.solutionCode;
-    if (!isCorruptSolutionDraft(draft, files)) return draft;
+    const initialLanguage: ExerciseLanguage =
+      hasJava && localStorage.getItem(languageStorageKey) === "java" ? "java" : "typescript";
+    const initialDraftKey = initialLanguage === "java" ? `${key}/java` : key;
+    const initialStarter = initialLanguage === "java" ? files.javaSolutionCode ?? "" : files.solutionCode;
+    const draft = getDraft(initialDraftKey);
+    if (!draft) return initialStarter;
+    if (initialLanguage === "java" || !isCorruptSolutionDraft(draft, files)) return draft;
 
-    clearDraft(key, "solution", "Recovered corrupt solution draft");
-    return files.solutionCode;
+    clearDraft(initialDraftKey, "solution", "Recovered corrupt solution draft");
+    return initialStarter;
   });
   const [previewCode, setPreviewCode] = useState(
     () => getDraft(key, "preview") ?? files.previewCode ?? ""
@@ -100,6 +119,16 @@ export function Workspace({
     () => getDraft(key, "styles") ?? files.stylesCode ?? ""
   );
   const [executionCode, setExecutionCode] = useState(code);
+  const [javaMainCode, setJavaMainCode] = useState(
+    () => getDraft(`${key}/java`, "main") ?? files.javaMainCode ?? ""
+  );
+  const [mainRunning, setMainRunning] = useState(false);
+  const [mainReload, setMainReload] = useState(
+    () => localStorage.getItem(`code-exercises-main-reload:${key}`) === "true"
+  );
+  const [testResult, setTestResult] = useState<RunResult | null>(null);
+  const [testsRunning, setTestsRunning] = useState(true);
+  const [testNonce, setTestNonce] = useState(0);
   const [activeFile, setActiveFile] = useState("solution");
   const [editorReveal, setEditorReveal] = useState<{ path: string; line: number; nonce: number } | null>(null);
   const [tab, setTab] = useState<DiagnosticsTab>(hasPreview ? "preview" : "tests");
@@ -117,6 +146,8 @@ export function Workspace({
   );
   const timer = useTimer();
   const nextConsoleId = useRef(1);
+  const mainAbortRef = useRef<AbortController | null>(null);
+  const mainRunIdRef = useRef(0);
 
   const submitted = !!prog.levels[level]?.submittedAt;
   const unlocked = prog.unlockedLevel;
@@ -135,12 +166,37 @@ export function Workspace({
   useEffect(() => {
     setGreen(false);
     setConsoleEntries([]);
+    setTestResult(null);
+    setTestsRunning(true);
     setInsightsLevel(null);
     timer.setElapsed(0);
     if (submitted) timer.stop();
     else timer.start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [level, exercise.id]);
+
+  useEffect(() => {
+    if (language === "java" && !hasJava) {
+      setLanguage("typescript");
+    }
+  }, [hasJava, language]);
+
+  useEffect(() => {
+    localStorage.setItem(languageStorageKey, language);
+    const draft = getDraft(solutionDraftKey);
+    const next = draft ?? currentSolutionStarter;
+    setCode(next);
+    setExecutionCode(next);
+    setJavaMainCode(getDraft(`${key}/java`, "main") ?? currentMainStarter);
+    setGreen(false);
+    setHint(null);
+    setTestResult(null);
+    setTestsRunning(true);
+    setConsoleEntries([]);
+    setActiveFile("solution");
+    setTab(hasPreview ? "preview" : "tests");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language, exercise.id]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -152,6 +208,11 @@ export function Workspace({
   }, [code]);
 
   const editActiveFile = (next: string) => {
+    if (activeFile === "main") {
+      setJavaMainCode(next);
+      saveDraft(`${key}/java`, next, "main");
+      return;
+    }
     if (activeFile === "preview") {
       setPreviewCode(next);
       saveDraft(key, next, "preview");
@@ -167,10 +228,23 @@ export function Workspace({
     setCode(next);
     setGreen(false);
     setHint(null);
-    saveDraft(key, next);
+    saveDraft(solutionDraftKey, next);
   };
   const formatActiveFile = async () => {
     if (af.ro) return;
+    if (language === "java") {
+      setConsoleEntries((prev) => [
+        ...prev,
+        {
+          id: nextConsoleId.current++,
+          source: "system",
+          level: "warn",
+          args: ["Java formatting is not available in the browser editor yet."],
+        },
+      ]);
+      setTab("console");
+      return;
+    }
 
     try {
       const formatted = await formatCode(af.code, af.path);
@@ -190,8 +264,9 @@ export function Workspace({
     }
   };
   const resetCode = () => {
-    clearDraft(key, "solution", "Before code reset");
-    setCode(files.solutionCode);
+    clearDraft(solutionDraftKey, "solution", "Before code reset");
+    setCode(currentSolutionStarter);
+    setExecutionCode(currentSolutionStarter);
     setGreen(false);
     setHint(null);
   };
@@ -203,17 +278,24 @@ export function Workspace({
     clearDraft(key, "styles", "Before styles reset");
     setStylesCode(files.stylesCode ?? "");
   };
+  const resetMain = () => {
+    clearDraft(`${key}/java`, "main", "Before main reset");
+    setJavaMainCode(currentMainStarter);
+  };
   const resetWholeExercise = () => {
     if (!confirm("Reset this exercise? This deletes its draft and progress, then returns to level 1.")) {
       return;
     }
 
     clearDraft(key, "solution", "Before exercise reset");
+    if (hasJava) clearDraft(`${key}/java`, "solution", "Before exercise reset");
+    if (hasJava) clearDraft(`${key}/java`, "main", "Before exercise reset");
     clearDraft(key, "preview", "Before exercise reset");
     clearDraft(key, "styles", "Before exercise reset");
-    setCode(files.solutionCode);
-    setExecutionCode(files.solutionCode);
+    setCode(currentSolutionStarter);
+    setExecutionCode(currentSolutionStarter);
     setPreviewCode(files.previewCode ?? "");
+    setJavaMainCode(currentMainStarter);
     setStylesCode(files.stylesCode ?? "");
     setProg(resetExercise(key));
     setGreen(false);
@@ -236,11 +318,11 @@ export function Workspace({
       saveDraft(key, snapshot.code, "preview");
       setActiveFile("preview");
     } else {
-      archiveDraft(key, code, "solution", "Before history restore");
+      archiveDraft(solutionDraftKey, code, "solution", "Before history restore");
       setCode(snapshot.code);
       setGreen(false);
       setHint(null);
-      saveDraft(key, snapshot.code);
+      saveDraft(solutionDraftKey, snapshot.code);
       setActiveFile("solution");
     }
     setHistoryFile(null);
@@ -249,7 +331,7 @@ export function Workspace({
   const openTestAt = (line?: number) => {
     setActiveFile("test");
     if (line) {
-      setEditorReveal({ path: files.testPath, line, nonce: Date.now() });
+      setEditorReveal({ path: currentTestPath, line, nonce: Date.now() });
     }
   };
 
@@ -279,6 +361,98 @@ export function Workspace({
       prev.length >= 500 ? prev : [...prev, { ...entry, id: nextConsoleId.current++ }]
     );
   };
+
+  const stopMain = () => {
+    mainAbortRef.current?.abort();
+    mainAbortRef.current = null;
+  };
+
+  const runMain = async () => {
+    if (language !== "java") return;
+    stopMain();
+    const runId = ++mainRunIdRef.current;
+    const controller = new AbortController();
+    mainAbortRef.current = controller;
+    setMainRunning(true);
+    setConsoleEntries([]);
+    setTab("console");
+    try {
+      await runJavaMain(
+        code,
+        javaMainCode,
+        { solutionFileName: files.javaSolutionFileName, mainFileName: files.javaMainFileName },
+        onConsole,
+        controller.signal
+      );
+    } finally {
+      if (mainRunIdRef.current === runId) {
+        mainAbortRef.current = null;
+        setMainRunning(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    localStorage.setItem(`code-exercises-main-reload:${key}`, String(mainReload));
+  }, [key, mainReload]);
+
+  useEffect(() => {
+    if (language !== "java" || !mainReload) return;
+    const timeout = window.setTimeout(() => {
+      void runMain();
+    }, 650);
+    return () => window.clearTimeout(timeout);
+    // runMain closes over current code/main code and intentionally restarts on edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, javaMainCode, language, mainReload]);
+
+  useEffect(() => {
+    if (language !== "java") stopMain();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language]);
+
+  useEffect(() => {
+    return () => stopMain();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTestsRunning(true);
+    // Debounce so we don't recompile on every execution-code update or manual rerun.
+    const timeout = window.setTimeout(async () => {
+      const consoleSink: ConsoleSink = (entry) => {
+        if (!cancelled) onConsole(entry);
+      };
+      const result =
+        language === "java"
+          ? await runJavaExercise(
+              currentTestCode,
+              executionCode,
+              { solutionFileName: files.javaSolutionFileName, testFileName: files.javaTestFileName },
+              level,
+              consoleSink
+            )
+          : await runExercise(
+              currentTestCode,
+              executionCode,
+              level,
+              consoleSink,
+              hasStyles ? stylesCode : undefined
+            );
+      if (cancelled) return;
+      setTestResult(result);
+      setTestsRunning(false);
+      onResult(result);
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+    // `onConsole` and `onResult` are render-local callbacks; this effect is keyed
+    // to the code/test inputs that should actually trigger a fresh run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTestCode, executionCode, hasStyles, stylesCode, level, testNonce, language]);
 
   const submit = () => {
     const completesExercise = level === exercise.levels;
@@ -312,7 +486,7 @@ export function Workspace({
     targetLevel: number,
     options: { scope: QualityScoreScope } = { scope: "exercise" }
   ) => {
-    const scoreKey = `${key}/${options.scope}`;
+    const scoreKey = `${scoreBaseKey}/${options.scope}`;
     const previousScore = getCodeQualityScore(scoreKey);
     const solutionHash = hashSolution(code);
     // Reuse an existing score whenever it was generated from the exact code on
@@ -339,6 +513,7 @@ export function Workspace({
           categoryId,
           exerciseId: exercise.id,
           level: targetLevel,
+          language,
           solution: code,
           readme: files.readme,
           perfSpec: files.perfCode,
@@ -436,7 +611,7 @@ export function Workspace({
   };
 
   const toggleActionItemClaim = (scope: QualityScoreScope, text: string) => {
-    const scoreKey = `${key}/${scope}`;
+    const scoreKey = `${scoreBaseKey}/${scope}`;
     const current = getCodeQualityScore(scoreKey);
     if (!current) return;
 
@@ -451,7 +626,7 @@ export function Workspace({
   };
 
   const qualityScoreForScope = (scope: QualityScoreScope): QualityScoreState => {
-    const scoreKey = `${key}/${scope}`;
+    const scoreKey = `${scoreBaseKey}/${scope}`;
     const current = qualityScores[scoreKey];
     if (current) return current;
 
@@ -496,17 +671,19 @@ export function Workspace({
   // Active file in the editor pane (solution is editable; the rest are read-only,
   // so you can inspect the tests / preview / perf spec while you debug).
   const openFiles: Record<string, { path: string; code: string; ro: boolean }> = {
-    solution: { path: files.solutionPath, code, ro: false },
-    test: { path: files.testPath, code: files.testCode, ro: true },
+    solution: { path: currentSolutionPath, code, ro: false },
+    test: { path: currentTestPath, code: currentTestCode, ro: true },
   };
+  if (language === "java") openFiles.main = { path: currentMainPath, code: javaMainCode, ro: false };
   if (files.previewCode) openFiles.preview = { path: "/preview.tsx", code: previewCode, ro: false };
   if (hasStyles) openFiles.styles = { path: "/styles.css", code: stylesCode, ro: false };
   if (files.perfCode) openFiles.perf = { path: "/perf.ts", code: files.perfCode, ro: true };
   const af = openFiles[activeFile] ?? openFiles.solution;
 
   const fileEntries: FileEntry[] = [
-    { id: "solution", name: files.solutionPath.slice(1), readOnly: false },
-    { id: "test", name: files.testPath.slice(1), readOnly: true },
+    { id: "solution", name: currentSolutionPath.slice(1), readOnly: false },
+    ...(language === "java" ? [{ id: "main", name: currentMainPath.slice(1), readOnly: false }] : []),
+    { id: "test", name: currentTestPath.slice(1), readOnly: true },
     ...(files.previewCode ? [{ id: "preview", name: "preview.tsx", readOnly: false }] : []),
     ...(hasStyles ? [{ id: "styles", name: "styles.css", readOnly: false }] : []),
     ...(files.perfCode ? [{ id: "perf", name: "perf.ts", readOnly: true }] : []),
@@ -542,12 +719,11 @@ export function Workspace({
   );
   const testsContent = (
     <TestPanel
-      testCode={files.testCode}
-      solutionCode={executionCode}
-      stylesCode={hasStyles ? stylesCode : undefined}
+      testCode={currentTestCode}
       level={level}
-      onResult={onResult}
-      onConsole={onConsole}
+      result={testResult}
+      running={testsRunning}
+      onRun={() => setTestNonce((n) => n + 1)}
       onOpenTest={openTestAt}
     />
   );
@@ -622,6 +798,44 @@ export function Workspace({
         </h1>
 
         <div className="ws-controls">
+          {hasJava && (
+            <div className="language-switch" title="Exercise language">
+              <button
+                className={`lbtn ${language === "typescript" ? "active" : ""}`}
+                onClick={() => setLanguage("typescript")}
+              >
+                JavaScript
+              </button>
+              <button
+                className={`lbtn ${language === "java" ? "active" : ""}`}
+                onClick={() => setLanguage("java")}
+              >
+                Java
+              </button>
+            </div>
+          )}
+
+          {language === "java" && (
+            <div className="main-run-controls">
+              <button
+                className={`run-main-btn ${mainRunning ? "running" : ""}`}
+                title="Compile and run Main.java"
+                onClick={() => void runMain()}
+              >
+                <span aria-hidden="true">{mainRunning ? "■" : "▶"}</span>
+                {mainRunning ? "Restart main" : "Run main"}
+              </button>
+              <label className="reload-toggle" title="Run Main.java automatically after Java code changes">
+                <input
+                  type="checkbox"
+                  checked={mainReload}
+                  onChange={(event) => setMainReload(event.target.checked)}
+                />
+                <span>reload</span>
+              </label>
+            </div>
+          )}
+
           <div className="layout-switch" title="Layout">
             <button
               className={`lbtn ${layout === "split" ? "active" : ""}`}
@@ -707,6 +921,12 @@ export function Workspace({
           {hasStyles && (
             <button className="reset" title="Reset styles.css to starter" onClick={resetStyles}>
               reset styles
+            </button>
+          )}
+
+          {language === "java" && (
+            <button className="reset" title="Reset Main.java to starter" onClick={resetMain}>
+              reset main
             </button>
           )}
 
@@ -825,7 +1045,7 @@ export function Workspace({
           stat={prog.levels[insightsLevel]}
           qualityScore={insightsSubmitted ? qualityScoreForScope(insightsScope) : { status: "idle" }}
           complete={prog.unlockedLevel > exercise.levels}
-          storageKey={`${key}/${insightsScope}`}
+          storageKey={`${scoreBaseKey}/${insightsScope}`}
           showAiReview={insightsSubmitted}
           onToggleClaim={(text) => toggleActionItemClaim(insightsScope, text)}
           onNext={() => {
@@ -839,8 +1059,9 @@ export function Workspace({
       {historyFile && (
         <DraftHistoryPanel
           file={historyFile}
-          snapshots={getDraftHistory(key, historyFile)}
+          snapshots={getDraftHistory(historyFile === "solution" ? solutionDraftKey : key, historyFile)}
           hasPreview={hasPreview}
+          solutionName={currentSolutionPath.slice(1)}
           onFile={setHistoryFile}
           onRestore={restoreSnapshot}
           onClose={() => setHistoryFile(null)}
@@ -854,6 +1075,7 @@ function DraftHistoryPanel({
   file,
   snapshots,
   hasPreview,
+  solutionName,
   onFile,
   onRestore,
   onClose,
@@ -861,6 +1083,7 @@ function DraftHistoryPanel({
   file: DraftFile;
   snapshots: DraftSnapshot[];
   hasPreview: boolean;
+  solutionName: string;
   onFile: (file: DraftFile) => void;
   onRestore: (snapshot: DraftSnapshot) => void;
   onClose: () => void;
@@ -875,7 +1098,7 @@ function DraftHistoryPanel({
       </div>
       <div className="history-tabs">
         <button className={`tab ${file === "solution" ? "active" : ""}`} onClick={() => onFile("solution")}>
-          solution.tsx
+          {solutionName}
         </button>
         {hasPreview && (
           <button className={`tab ${file === "preview" ? "active" : ""}`} onClick={() => onFile("preview")}>

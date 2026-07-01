@@ -10,6 +10,7 @@ const ICON: Record<string, string> = {
   preview: "▦",
   perf: "⚡",
   styles: "#",
+  main: "▶",
 };
 
 export function Explorer({

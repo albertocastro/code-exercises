@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ConsoleEntry, ConsoleLevel } from "./runner/consoleCapture";
 
 const LEVELS: ConsoleLevel[] = ["log", "info", "warn", "error"];
-const SOURCES: ConsoleEntry["source"][] = ["tests", "preview"];
+const SOURCES: ConsoleEntry["source"][] = ["tests", "preview", "run"];
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -39,6 +39,7 @@ export function ConsolePanel({
   const [sourceFilter, setSourceFilter] = useState<Record<ConsoleEntry["source"], boolean>>({
     tests: true,
     preview: true,
+    run: true,
   });
   const [copyState, setCopyState] = useState<"idle" | "done" | "error">("idle");
   const bodyRef = useRef<HTMLDivElement | null>(null);

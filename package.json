@@ -2,6 +2,9 @@
   "name": "code-exercises",
   "private": true,
   "scripts": {
+    "postinstall": "node scripts/runtime.mjs install all",
+    "runtime:install": "node scripts/runtime.mjs install all",
+    "runtime:up": "node scripts/runtime.mjs up all",
     "start": "tsx cli.ts",
     "test": "jest",
     "watch": "jest --watchAll",
@@ -9,7 +12,7 @@
     "watch:react": "vitest",
     "test:all": "jest && vitest run",
     "preview:web": "vite",
-    "web": "vite --config vite.web.config.ts",
+    "web": "node scripts/runtime.mjs up all && vite --config vite.web.config.ts",
     "web:build": "vite build --config vite.web.config.ts"
   },
   "devDependencies": {

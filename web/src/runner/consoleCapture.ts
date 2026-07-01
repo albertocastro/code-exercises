@@ -3,7 +3,7 @@ export type ConsoleLevel = "log" | "info" | "warn" | "error";
 export interface ConsoleEntry {
   id: number;
   level: ConsoleLevel;
-  source: "tests" | "preview";
+  source: "tests" | "preview" | "run";
   args: string[];
 }
 

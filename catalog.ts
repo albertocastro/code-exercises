@@ -37,6 +37,9 @@ export const CATALOG: CategoryMeta[] = [
       { id: "exercise_8", name: "Expression Evaluator", levels: 4, topic: "Parsing and operator precedence" },
       { id: "exercise_9", name: "Task Scheduler", levels: 4, topic: "Dependencies and topological ordering" },
       { id: "exercise_10", name: "Event Bus", levels: 4, topic: "Pub/sub subscriptions and dispatch" },
+      { id: "exercise_11", name: "Streaming LLM Response Parser", levels: 4, topic: "Parsing an SSE stream and assembling chat/tool-call deltas" },
+      { id: "exercise_12", name: "Concurrent Work Queue", levels: 4, topic: "Async job orchestration with concurrency limits, retries, cancellation, and timeouts" },
+      { id: "exercise_13", name: "Thread-Safe Counter", levels: 4, topic: "Java concurrency: atomicity, check-then-act, guarded waits, and compound atomic ops" },
     ],
   },
   {

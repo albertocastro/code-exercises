@@ -139,7 +139,55 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 
 .ws-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 
-.layout-switch { display: flex; gap: 2px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.layout-switch,
+.language-switch { display: flex; gap: 2px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.main-run-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.run-main-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--green);
+  border-radius: 7px;
+  background: var(--green);
+  color: #08312a;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.run-main-btn:hover { filter: brightness(1.08); }
+.run-main-btn.running {
+  border-color: #e2c08d;
+  background: #e2c08d;
+  color: #2b210b;
+}
+.reload-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  user-select: none;
+}
+.reload-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent-2);
+}
+.reload-toggle input {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--green);
+}
 .lbtn {
   background: transparent;
   border: none;

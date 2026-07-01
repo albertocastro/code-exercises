@@ -7,5 +7,5 @@
     "outDir": "dist"
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "dist", "dist-web", "react", "web", "vite.config.ts", "vite.web.config.ts", "vitest.config.ts", "vitest.setup.ts"]
+  "exclude": ["node_modules", "dist", "dist-web", "_solutions", "react", "web", "vite.config.ts", "vite.web.config.ts", "vitest.config.ts", "vitest.setup.ts"]
 }

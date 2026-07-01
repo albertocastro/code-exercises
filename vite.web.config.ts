@@ -1,7 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { spawn } from "child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
 import { tmpdir } from "os";
 import * as path from "path";
@@ -12,11 +12,24 @@ type ReviewPayload = {
   exerciseId?: string;
   level?: number;
   solution?: string;
+  language?: "typescript" | "java";
   readme?: string;
   perfSpec?: string;
   messages?: ReviewMessage[];
   previousActionItems?: Array<{ text?: string; status?: "open" | "done"; note?: string; claimed?: boolean }>;
 };
+
+type JavaPayload = {
+  solutionCode?: string;
+  testCode?: string;
+  mainCode?: string;
+  solutionFileName?: string;
+  testFileName?: string;
+  mainFileName?: string;
+  level?: number;
+};
+
+const JAVA_RUNTIME_CONTAINER = "code-exercises-java-runtime";
 
 // On-demand AI review/chat: POST /api/review { categoryId, exerciseId, level,
 // solution, readme, messages? }. Writes the solution to a temp dir and runs an
@@ -59,6 +72,20 @@ function reviewBridge(): Plugin {
       server.middlewares.use("/api/score", (req, res) => handleAgentRequest("score", req, res));
     },
   };
+}
+
+function readJsonBody<T>(req: IncomingMessage): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(body || "{}"));
+      } catch {
+        reject(new Error("Invalid JSON"));
+      }
+    });
+  });
 }
 
 // Inline the spec + solution directly into the prompt. The files are still
@@ -106,8 +133,13 @@ function buildReviewPrompt(p: ReviewPayload, ext: string) {
   );
 }
 
+function solutionExt(p: ReviewPayload) {
+  if (p.language === "java") return "java";
+  return p.categoryId === "react" ? "tsx" : "ts";
+}
+
 function runAgentReview(p: ReviewPayload): Promise<string> {
-  const ext = p.categoryId === "react" ? "tsx" : "ts";
+  const ext = solutionExt(p);
   return runAgent(p, ext, buildReviewPrompt(p, ext), "review-output.txt");
 }
 
@@ -261,7 +293,7 @@ function normalizeScoreOutput(output: string) {
 }
 
 async function runAgentScore(p: ReviewPayload): Promise<string> {
-  const ext = p.categoryId === "react" ? "tsx" : "ts";
+  const ext = solutionExt(p);
   const output = await runAgent(p, ext, buildScorePrompt(p, ext), "score-output.txt");
   return normalizeScoreOutput(output);
 }
@@ -390,10 +422,293 @@ function exerciseBackendBridge(): Plugin {
   };
 }
 
+function runCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  timeoutMs: number
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      proc.kill();
+      resolve({ code: null, stdout, stderr: `${stderr}\nTimed out after ${timeoutMs}ms.`.trim() });
+    }, timeoutMs);
+
+    proc.stdout.on("data", (data) => (stdout += data));
+    proc.stderr.on("data", (data) => (stderr += data));
+    proc.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+async function runJavaTests(payload: JavaPayload) {
+  const dir = mkdtempSync(path.join(tmpdir(), "exercise-java-"));
+  const runId = `exercise-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const containerDir = `/tmp/${runId}`;
+  const solutionFileName = payload.solutionFileName || "Solution.java";
+  const testFileName = payload.testFileName || "SolutionTest.java";
+  const testClass = testFileName.replace(/\.java$/, "");
+  try {
+    writeFileSync(path.join(dir, solutionFileName), payload.solutionCode ?? "");
+    writeFileSync(path.join(dir, testFileName), payload.testCode ?? "");
+
+    const mkdir = await runCommand(
+      "docker",
+      ["exec", JAVA_RUNTIME_CONTAINER, "mkdir", "-p", containerDir],
+      path.resolve(__dirname),
+      10_000
+    );
+    if (mkdir.code !== 0) {
+      throw new Error(
+        (mkdir.stderr || mkdir.stdout).trim() ||
+          "Java Docker runtime is not running. Start Docker Desktop and run npm run runtime:up."
+      );
+    }
+
+    const copy = await runCommand(
+      "docker",
+      ["cp", `${dir}/.`, `${JAVA_RUNTIME_CONTAINER}:${containerDir}`],
+      path.resolve(__dirname),
+      10_000
+    );
+    if (copy.code !== 0) {
+      throw new Error((copy.stderr || copy.stdout).trim() || "Could not copy files into Java Docker runtime.");
+    }
+
+    const compile = await runCommand(
+      "docker",
+      ["exec", "-w", containerDir, JAVA_RUNTIME_CONTAINER, "bash", "-lc", "javac *.java"],
+      path.resolve(__dirname),
+      10_000
+    );
+    if (compile.code !== 0) {
+      return {
+        ok: true,
+        result: {
+          rows: [],
+          passed: 0,
+          failed: 0,
+          skipped: 0,
+          compileError: `javac — ${(compile.stderr || compile.stdout).trim() || "Compilation failed."}`,
+        },
+      };
+    }
+
+    const run = await runCommand(
+      "docker",
+      ["exec", "-w", containerDir, JAVA_RUNTIME_CONTAINER, "java", testClass, String(payload.level ?? 1)],
+      path.resolve(__dirname),
+      12_000
+    );
+    const output = run.stdout.trim();
+    const jsonLine = output
+      .split("\n")
+      .reverse()
+      .find((line) => line.trim().startsWith("{"));
+    if (run.code !== 0 || !jsonLine) {
+      return {
+        ok: true,
+        result: {
+          rows: [],
+          passed: 0,
+          failed: 0,
+          skipped: 0,
+          compileError: `java — ${(run.stderr || run.stdout).trim() || "Test process failed."}`,
+        },
+      };
+    }
+
+    return {
+      ok: true,
+      result: JSON.parse(jsonLine),
+      console: output
+        .split("\n")
+        .slice(0, -1)
+        .filter(Boolean),
+    };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      error:
+        message.includes("ENOENT")
+          ? "Java Docker runner unavailable: install Docker and run npm run runtime:up."
+          : message,
+    };
+  } finally {
+    await runCommand(
+      "docker",
+      ["exec", JAVA_RUNTIME_CONTAINER, "rm", "-rf", containerDir],
+      path.resolve(__dirname),
+      5_000
+    ).catch(() => {});
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function writeJsonLine(res: ServerResponse, value: unknown) {
+  res.write(`${JSON.stringify(value)}\n`);
+}
+
+async function streamJavaMain(payload: JavaPayload, res: ServerResponse) {
+  const dir = mkdtempSync(path.join(tmpdir(), "exercise-java-main-"));
+  const runId = `exercise-main-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const containerDir = `/tmp/${runId}`;
+  let activeProc: ReturnType<typeof spawn> | null = null;
+  let closed = false;
+  const solutionFileName = payload.solutionFileName || "Solution.java";
+  const mainFileName = payload.mainFileName || "Main.java";
+  const mainClass = mainFileName.replace(/\.java$/, "");
+
+  const cleanup = async () => {
+    if (activeProc && !activeProc.killed) activeProc.kill();
+    await runCommand(
+      "docker",
+      ["exec", JAVA_RUNTIME_CONTAINER, "rm", "-rf", containerDir],
+      path.resolve(__dirname),
+      5_000
+    ).catch(() => {});
+    rmSync(dir, { recursive: true, force: true });
+  };
+
+  res.on("close", () => {
+    closed = true;
+    if (activeProc && !activeProc.killed) activeProc.kill();
+  });
+
+  try {
+    writeFileSync(path.join(dir, solutionFileName), payload.solutionCode ?? "");
+    writeFileSync(path.join(dir, mainFileName), payload.mainCode ?? "");
+
+    const mkdir = await runCommand(
+      "docker",
+      ["exec", JAVA_RUNTIME_CONTAINER, "mkdir", "-p", containerDir],
+      path.resolve(__dirname),
+      10_000
+    );
+    if (mkdir.code !== 0) throw new Error((mkdir.stderr || mkdir.stdout).trim() || "Java Docker runtime is not running.");
+
+    const copy = await runCommand(
+      "docker",
+      ["cp", `${dir}/.`, `${JAVA_RUNTIME_CONTAINER}:${containerDir}`],
+      path.resolve(__dirname),
+      10_000
+    );
+    if (copy.code !== 0) throw new Error((copy.stderr || copy.stdout).trim() || "Could not copy files into Java Docker runtime.");
+
+    const compile = await runCommand(
+      "docker",
+      ["exec", "-w", containerDir, JAVA_RUNTIME_CONTAINER, "bash", "-lc", "javac *.java"],
+      path.resolve(__dirname),
+      10_000
+    );
+    if (compile.code !== 0) {
+      writeJsonLine(res, { type: "stderr", text: (compile.stderr || compile.stdout).trim() || "Compilation failed." });
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      const proc = spawn(
+        "docker",
+        ["exec", "-w", containerDir, JAVA_RUNTIME_CONTAINER, "java", mainClass],
+        { cwd: path.resolve(__dirname), stdio: ["ignore", "pipe", "pipe"] }
+      );
+      activeProc = proc;
+      const timer = setTimeout(() => {
+        proc.kill();
+        if (!closed) writeJsonLine(res, { type: "stderr", text: "Main.java timed out after 30s." });
+      }, 30_000);
+
+      proc.stdout.on("data", (data) => {
+        for (const line of data.toString().split(/\r?\n/)) {
+          if (line && !closed) writeJsonLine(res, { type: "stdout", text: line });
+        }
+      });
+      proc.stderr.on("data", (data) => {
+        for (const line of data.toString().split(/\r?\n/)) {
+          if (line && !closed) writeJsonLine(res, { type: "stderr", text: line });
+        }
+      });
+      proc.on("error", (e) => {
+        clearTimeout(timer);
+        if (!closed) writeJsonLine(res, { type: "error", error: e.message });
+        resolve();
+      });
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        activeProc = null;
+        if (!closed && code && code !== 0) writeJsonLine(res, { type: "stderr", text: `Main exited with code ${code}.` });
+        resolve();
+      });
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    writeJsonLine(res, {
+      type: "error",
+      error: message.includes("ENOENT")
+        ? "Java Docker runner unavailable: install Docker and run npm run runtime:up."
+        : message,
+    });
+  } finally {
+    await cleanup();
+    if (!closed) res.end();
+  }
+}
+
+function javaRunnerBridge(): Plugin {
+  return {
+    name: "exercise-java-runner-bridge",
+    configureServer(server) {
+      server.middlewares.use("/api/java-test", async (req, res) => {
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          return res.end("Method Not Allowed");
+        }
+
+        try {
+          const payload = await readJsonBody<JavaPayload>(req);
+          const result = await runJavaTests(payload);
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify(result));
+        } catch (e) {
+          res.statusCode = 400;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ ok: false, error: (e as Error).message }));
+        }
+      });
+      server.middlewares.use("/api/java-main", async (req, res) => {
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          return res.end("Method Not Allowed");
+        }
+
+        res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        try {
+          const payload = await readJsonBody<JavaPayload>(req);
+          await streamJavaMain(payload, res);
+        } catch (e) {
+          writeJsonLine(res, { type: "error", error: (e as Error).message });
+          res.end();
+        }
+      });
+    },
+  };
+}
+
 // Dev/build config for the browser IDE (web/). Separate from vite.config.ts,
 // which serves the lightweight component preview used by the CLI.
 export default defineConfig({
-  plugins: [react(), reviewBridge(), exerciseBackendBridge()],
+  plugins: [react(), reviewBridge(), javaRunnerBridge(), exerciseBackendBridge()],
   root: path.resolve(__dirname, "web"),
   // Pre-bundle the heavy deps at startup so entering the workspace doesn't
   // trigger a mid-session re-optimization (which 504s in-flight Monaco chunks).

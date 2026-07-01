@@ -4,6 +4,13 @@ import { installHighlighting } from "./monaco-setup";
 import { installTypeLibraries } from "./monaco-type-libs";
 import { installAutoImports } from "./autoImports";
 
+function languageForPath(path: string) {
+  if (path.endsWith(".java")) return "java";
+  if (path.endsWith(".css")) return "css";
+  if (path.endsWith(".json")) return "json";
+  return "typescript";
+}
+
 export function CodeEditor({
   path,
   value,
@@ -60,7 +67,7 @@ export function CodeEditor({
       key={path}
       height="100%"
       theme="dark-plus"
-      language="typescript"
+      language={languageForPath(path)}
       path={path}
       value={value}
       onMount={(editor) => {

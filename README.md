@@ -4,16 +4,19 @@ Progressive coding exercises across two **categories**, each with multiple
 levels. Every level builds on the previous one — pass all its tests before
 moving on.
 
-- **LeetCode** — TypeScript algorithm & design exercises (stateful simulations,
-  standard library only), run with **Jest**.
+- **LeetCode** — TypeScript/Java algorithm & design exercises (stateful simulations,
+  standard library only), run with **Jest** or a Docker-backed language runtime.
 - **React** — build-a-component exercises run with **Vitest + React Testing
   Library**, plus a live browser preview of your work.
 
 ## Setup
 
 ```bash
-npm install   # run once from this folder
+npm install   # run once from this folder; builds/starts language runtimes
 ```
+
+Java exercises run inside Docker, not on your host JDK. Keep Docker Desktop
+running before setup and before `npm run web`.
 
 ## The Web IDE
 
@@ -23,12 +26,12 @@ entirely on your machine:
 ```bash
 npm run web          # dev server at http://localhost:5180
 npm run web:build    # static production build into dist-web/
+npm run runtime:up   # manually warm/start language runtime containers
 ```
 
 - **Monaco** editor (bundled locally — works offline / behind content blockers).
-- **In-browser runner**: your code is transpiled with Sucrase and the tests run
-  locally against React Testing Library — no CodeSandbox, no network. Live
-  component **preview** for React exercises.
+- **Local runners**: TypeScript/React runs in the browser; Java runs through a
+  warm Docker container so switching languages does not wait on JDK startup.
 - **Levels & Submit**: tests going green enables **Submit**, which records the
   level and unlocks the next; higher levels stay 🔒 until you submit the prior
   one. Per-level **timer** auto-stops when you pass.
@@ -68,6 +71,9 @@ footer in case the browser doesn't open automatically.
 LEVEL=1 npx jest exercise_1          # through level 1
 npx jest exercise_1                  # all levels
 npm test                             # all leetcode exercises
+
+# LeetCode Java, when the exercise provides WorkQueue.java / WorkQueueTest.java
+node scripts/runtime.mjs java-test exercise_12 1
 
 # React (Vitest)
 LEVEL=1 npx vitest run react/01_counter   # through level 1

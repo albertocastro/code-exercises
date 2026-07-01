@@ -17,25 +17,49 @@ const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 // Exercise/category metadata lives in catalog.ts (shared with the web IDE).
 // Here we attach the Node-only runner behaviour for each category.
 type Exercise = ExerciseMeta;
+type ExerciseLanguage = "typescript" | "java";
 
 interface Category extends CategoryMeta {
   /** Absolute path to the file the learner edits (watched to rerun tests). */
-  solutionPath: (id: string) => string;
-  /** Full shell command that emits Jest-compatible JSON on stdout. */
-  testCommand: (id: string) => string;
+  solutionPath: (id: string, language: ExerciseLanguage) => string;
+  /** Full shell command that emits parseable JSON on stdout. */
+  testCommand: (id: string, language: ExerciseLanguage, level: number) => string;
+  hasJava: (id: string) => boolean;
+}
+
+function javaExerciseFiles(id: string) {
+  const dir = path.join(__dirname, id);
+  if (!fs.existsSync(dir)) return { solution: null, test: null };
+
+  const files = fs.readdirSync(dir).filter(file => file.endsWith(".java")).sort();
+  return {
+    solution: files.find(file => file !== "Main.java" && !file.endsWith("Test.java")) ?? null,
+    test: files.find(file => file.endsWith("Test.java")) ?? null,
+  };
 }
 
 const CATEGORIES: Category[] = CATALOG.map(meta =>
   meta.runner === "jest"
     ? {
         ...meta,
-        solutionPath: id => path.join(__dirname, id, "solution.ts"),
-        testCommand: id => `npx jest ${id} --json --forceExit --silent`,
+        solutionPath: (id, language) =>
+          language === "java"
+            ? path.join(__dirname, id, javaExerciseFiles(id).solution ?? "Solution.java")
+            : path.join(__dirname, id, "solution.ts"),
+        testCommand: (id, language, level) =>
+          language === "java"
+            ? `node scripts/runtime.mjs java-test ${id} ${level}`
+            : `npx jest ${id} --json --forceExit --silent`,
+        hasJava: id => {
+          const files = javaExerciseFiles(id);
+          return files.solution !== null && files.test !== null;
+        },
       }
     : {
         ...meta,
         solutionPath: id => path.join(__dirname, "react", id, "solution.tsx"),
         testCommand: id => `npx vitest run react/${id} --reporter=json --silent`,
+        hasJava: () => false,
       }
 );
 
@@ -138,19 +162,48 @@ interface AssertionResult {
 interface TestResult {
   numFailedTests: number;
   numPassedTests: number;
+  numPendingTests?: number;
   testResults: Array<{ assertionResults?: AssertionResult[]; testResults?: AssertionResult[]; }>;
 }
 
-function runTests(cat: Category, ex: Exercise, level: number): TestResult | null {
+function normalizeJavaResult(stdout: string): TestResult | null {
+  const jsonLine = stdout
+    .trim()
+    .split("\n")
+    .reverse()
+    .find(line => line.trim().startsWith("{"));
+  if (!jsonLine) return null;
+  const parsed = JSON.parse(jsonLine);
+  return {
+    numFailedTests: parsed.failed ?? 0,
+    numPassedTests: parsed.passed ?? 0,
+    numPendingTests: parsed.skipped ?? 0,
+    testResults: [
+      {
+        assertionResults: (parsed.rows ?? []).map((row: any) => ({
+          status: row.status === "pass" ? "passed" : row.status === "skip" ? "pending" : "failed",
+          title: row.name,
+          failureMessages: row.error ? [row.error] : [],
+        })),
+      },
+    ],
+  };
+}
+
+function runTests(cat: Category, ex: Exercise, level: number, language: ExerciseLanguage): TestResult | null {
   try {
-    const stdout = execSync(cat.testCommand(ex.id), {
+    const stdout = execSync(cat.testCommand(ex.id, language, level), {
       encoding: "utf-8",
       env: { ...process.env, LEVEL: String(level) },
       stdio: ["pipe", "pipe", "pipe"],
     });
-    return JSON.parse(stdout);
+    return language === "java" ? normalizeJavaResult(stdout) : JSON.parse(stdout);
   } catch (e: any) {
-    try { return JSON.parse(e.stdout); } catch { return null; }
+    try {
+      return language === "java" ? normalizeJavaResult(e.stdout) : JSON.parse(e.stdout);
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -217,17 +270,18 @@ function watchUntilPassed(
   cat: Category,
   ex: Exercise,
   level: number,
-  preview: Preview | null
+  preview: Preview | null,
+  language: ExerciseLanguage
 ): Promise<void> {
   return new Promise(resolve => {
-    const solutionPath = cat.solutionPath(ex.id);
+    const solutionPath = cat.solutionPath(ex.id, language);
     let watcher: fs.FSWatcher | null = null;
     let debounce: NodeJS.Timeout | null = null;
     let resolved = false;
 
     const check = () => {
       const spinner = renderSpinner(ex);
-      const result = runTests(cat, ex, level);
+      const result = runTests(cat, ex, level, language);
       clearInterval(spinner);
 
       renderResults(ex, level, result, preview?.url ?? null);
@@ -253,19 +307,20 @@ function watchUntilPassed(
 }
 
 // ── Run a category from a chosen exercise to the end ─────────────────────────
-interface RunOptions { openVSCode: boolean; openBrowser: boolean; }
+interface RunOptions { openVSCode: boolean; openBrowser: boolean; language: ExerciseLanguage; }
 
 async function runFrom(cat: Category, exerciseIndex: number, opts: RunOptions) {
   if (opts.openVSCode) {
-    openEditor(path.dirname(cat.solutionPath(cat.exercises[exerciseIndex].id)));
+    openEditor(path.dirname(cat.solutionPath(cat.exercises[exerciseIndex].id, opts.language)));
   }
 
   for (let i = exerciseIndex; i < cat.exercises.length; i++) {
     const ex = cat.exercises[i];
+    const language = opts.language === "java" && !cat.hasJava(ex.id) ? "typescript" : opts.language;
     const preview = cat.preview && opts.openBrowser ? startPreview(ex.id) : null;
 
     for (let level = 1; level <= ex.levels; level++) {
-      await watchUntilPassed(cat, ex, level, preview);
+      await watchUntilPassed(cat, ex, level, preview, language);
 
       if (level < ex.levels) {
         console.log(green(bold(`\n  ✓ Level ${level} complete!`)));
@@ -308,6 +363,20 @@ async function main() {
         { footer: "↑↓ navigate   enter select   ←/esc back   ctrl+c quit", allowBack: true }
       );
       if (exChoice === BACK) break;
+      const ex = cat.exercises[exChoice];
+      let language: ExerciseLanguage = "typescript";
+      if (cat.hasJava(ex.id)) {
+        const langChoice = await menu(
+          `${ex.name} — language`,
+          [
+            { id: "typescript", name: "JavaScript / TypeScript" },
+            { id: "java", name: "Java" },
+          ],
+          { footer: "↑↓ navigate   enter select   ←/esc back   ctrl+c quit", allowBack: true }
+        );
+        if (langChoice === BACK) continue;
+        language = langChoice === 1 ? "java" : "typescript";
+      }
 
       // Prestep: choose what to open before the exercise starts.
       const preItems = cat.preview
@@ -321,15 +390,15 @@ async function main() {
             { id: "none",    name: "Just run tests (open nothing)" },
           ];
       const pre = await menu(
-        `${cat.exercises[exChoice].name} — before we start`,
+        `${ex.name} — before we start`,
         preItems,
         { footer: "↑↓ navigate   enter select   ←/esc back   ctrl+c quit", allowBack: true }
       );
       if (pre === BACK) continue;
 
       const opts: RunOptions = cat.preview
-        ? { openVSCode: pre === 0, openBrowser: pre === 0 || pre === 1 }
-        : { openVSCode: pre === 0, openBrowser: false };
+        ? { openVSCode: pre === 0, openBrowser: pre === 0 || pre === 1, language }
+        : { openVSCode: pre === 0, openBrowser: false, language };
       await runFrom(cat, exChoice, opts);
     }
   }
