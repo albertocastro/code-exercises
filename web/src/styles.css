@@ -233,6 +233,8 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   text-align: right;
 }
 .timer.running .time { color: var(--accent); }
+/* Running intent, but not actually accruing (tab hidden / away / idle). */
+.timer.running.idle .time { color: var(--muted); opacity: 0.7; }
 .timer-btn {
   background: transparent;
   border: 1px solid var(--border);

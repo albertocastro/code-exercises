@@ -144,7 +144,7 @@ export function Workspace({
   const [layout, setLayout] = useState<Layout>(
     () => (localStorage.getItem(LAYOUT_KEY) as Layout) || "split"
   );
-  const timer = useTimer();
+  const timer = useTimer(`${key}:L${level}`);
   const nextConsoleId = useRef(1);
   const mainAbortRef = useRef<AbortController | null>(null);
   const mainRunIdRef = useRef(0);
@@ -169,7 +169,8 @@ export function Workspace({
     setTestResult(null);
     setTestsRunning(true);
     setInsightsLevel(null);
-    timer.setElapsed(0);
+    // useTimer restores this level's persisted active-time from storage when the
+    // key changes; don't clobber it with 0 here. Just set the running intent.
     if (submitted) timer.stop();
     else timer.start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -301,7 +302,13 @@ export function Workspace({
     setGreen(false);
     setHint(null);
     setConsoleEntries([]);
-    timer.setElapsed(0);
+    // Wipe every per-level active-time total for this exercise, not just the
+    // current level, so a full reset really starts the clock from zero.
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(`code-exercises-timer:${key}:L`)) localStorage.removeItem(k);
+    }
+    timer.reset();
     timer.start();
     onLevel(1);
   };
@@ -853,8 +860,21 @@ export function Workspace({
             </button>
           </div>
 
-          <div className={`timer ${timer.running ? "running" : ""}`}>
-            <span className="time">{fmtTime(timer.elapsed)}</span>
+          <div
+            className={`timer ${timer.running ? "running" : ""} ${
+              timer.running && !timer.active ? "idle" : ""
+            }`}
+          >
+            <span
+              className="time"
+              title={
+                timer.running && !timer.active
+                  ? "Paused — counts only while you're active on this tab"
+                  : undefined
+              }
+            >
+              {fmtTime(timer.elapsed)}
+            </span>
             <button
               className="timer-btn"
               title={timer.running ? "Pause" : "Start"}
