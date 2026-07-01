@@ -720,6 +720,15 @@ export function Workspace({
           onChange={editActiveFile}
           readOnly={af.ro}
           reveal={editorReveal?.path === af.path ? editorReveal : undefined}
+          javaSiblings={
+            language === "java"
+              ? [
+                  { name: files.javaSolutionFileName ?? "Solution.java", content: code },
+                  { name: files.javaTestFileName ?? "SolutionTest.java", content: currentTestCode },
+                  { name: files.javaMainFileName ?? "Main.java", content: javaMainCode },
+                ]
+              : undefined
+          }
         />
       </div>
     </>

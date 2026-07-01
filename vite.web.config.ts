@@ -29,7 +29,92 @@ type JavaPayload = {
   level?: number;
 };
 
+type JavaCompilePayload = {
+  files?: { name?: string; content?: string }[];
+};
+
+type JavaDiagnostic = {
+  file: string;
+  line: number;
+  column: number;
+  severity: "error" | "warning";
+  message: string;
+};
+
 const JAVA_RUNTIME_CONTAINER = "code-exercises-java-runtime";
+
+// Turn `javac` stderr into structured diagnostics. javac prints a header line
+// (`File.java:12: error: message`) optionally followed by the offending source
+// line and a `^` caret whose position gives us the column.
+function parseJavacDiagnostics(stderr: string): JavaDiagnostic[] {
+  const lines = stderr.split(/\r?\n/);
+  const header = /^(.+\.java):(\d+): (error|warning): (.*)$/;
+  const out: JavaDiagnostic[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = header.exec(lines[i]);
+    if (!m) continue;
+    let column = 1;
+    // Two lines down is often the caret; its offset is the 1-based column.
+    const caret = lines[i + 2];
+    if (caret && /^\s*\^\s*$/.test(caret)) column = caret.indexOf("^") + 1;
+    out.push({
+      file: path.basename(m[1]),
+      line: Number(m[2]),
+      column,
+      severity: m[3] as "error" | "warning",
+      message: m[4].trim(),
+    });
+  }
+  return out;
+}
+
+async function compileJava(payload: JavaCompilePayload) {
+  const files = (payload.files ?? []).filter(
+    (f): f is { name: string; content: string } => !!f?.name && typeof f.content === "string"
+  );
+  if (!files.length) return { ok: true, diagnostics: [] as JavaDiagnostic[] };
+
+  const dir = mkdtempSync(path.join(tmpdir(), "exercise-java-compile-"));
+  const runId = `compile-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const containerDir = `/tmp/${runId}`;
+  try {
+    for (const f of files) writeFileSync(path.join(dir, path.basename(f.name)), f.content);
+
+    const mkdir = await runCommand(
+      "docker",
+      ["exec", JAVA_RUNTIME_CONTAINER, "mkdir", "-p", containerDir],
+      path.resolve(__dirname),
+      10_000
+    );
+    if (mkdir.code !== 0) throw new Error((mkdir.stderr || mkdir.stdout).trim() || "Java runtime is not running.");
+
+    const copy = await runCommand(
+      "docker",
+      ["cp", `${dir}/.`, `${JAVA_RUNTIME_CONTAINER}:${containerDir}`],
+      path.resolve(__dirname),
+      10_000
+    );
+    if (copy.code !== 0) throw new Error((copy.stderr || copy.stdout).trim() || "Could not copy files into Java runtime.");
+
+    const compile = await runCommand(
+      "docker",
+      ["exec", "-w", containerDir, JAVA_RUNTIME_CONTAINER, "bash", "-lc", "javac -Xlint:none *.java"],
+      path.resolve(__dirname),
+      15_000
+    );
+    return { ok: true, diagnostics: parseJavacDiagnostics(compile.stderr || compile.stdout) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e), diagnostics: [] as JavaDiagnostic[] };
+  } finally {
+    await runCommand(
+      "docker",
+      ["exec", JAVA_RUNTIME_CONTAINER, "rm", "-rf", containerDir],
+      path.resolve(__dirname),
+      5_000
+    ).catch(() => {});
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 // On-demand AI review/chat: POST /api/review { categoryId, exerciseId, level,
 // solution, readme, messages? }. Writes the solution to a temp dir and runs an
@@ -683,6 +768,22 @@ function javaRunnerBridge(): Plugin {
           res.statusCode = 400;
           res.setHeader("Content-Type", "application/json");
           res.end(JSON.stringify({ ok: false, error: (e as Error).message }));
+        }
+      });
+      server.middlewares.use("/api/java-compile", async (req, res) => {
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          return res.end("Method Not Allowed");
+        }
+        try {
+          const payload = await readJsonBody<JavaCompilePayload>(req);
+          const result = await compileJava(payload);
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify(result));
+        } catch (e) {
+          res.statusCode = 400;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ ok: false, error: (e as Error).message, diagnostics: [] }));
         }
       });
       server.middlewares.use("/api/java-main", async (req, res) => {

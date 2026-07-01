@@ -1,8 +1,12 @@
-import { useEffect, useRef, type ComponentProps } from "react";
+import { useEffect, useMemo, useRef, type ComponentProps } from "react";
 import MonacoEditor, { type Monaco } from "@monaco-editor/react";
 import { installHighlighting } from "./monaco-setup";
 import { installTypeLibraries } from "./monaco-type-libs";
 import { installAutoImports } from "./autoImports";
+import { installJavaIntelliSense, setJavaSources } from "./java/intellisense";
+import { applyJavaMarkers, clearJavaMarkers, fetchJavaDiagnostics } from "./java/diagnostics";
+
+type JavaSibling = { name: string; content: string };
 
 function languageForPath(path: string) {
   if (path.endsWith(".java")) return "java";
@@ -17,14 +21,27 @@ export function CodeEditor({
   onChange,
   readOnly,
   reveal,
+  javaSiblings,
 }: {
   path: string;
   value: string;
   onChange: (next: string) => void;
   readOnly?: boolean;
   reveal?: { line: number; nonce: number };
+  // The exercise's OTHER Java files, so completion and javac see the whole
+  // program (the mounted model only holds the file being edited).
+  javaSiblings?: JavaSibling[];
 }) {
   const editorRef = useRef<Parameters<NonNullable<ComponentProps<typeof MonacoEditor>["onMount"]>>[0] | null>(null);
+  const monacoRef = useRef<Monaco | null>(null);
+
+  const isJava = languageForPath(path) === "java";
+  const fileName = path.replace(/^.*\//, "");
+  // Stable signature so the diagnostics effect only re-fires on real changes.
+  const siblingsSig = useMemo(
+    () => JSON.stringify(javaSiblings ?? []),
+    [javaSiblings]
+  );
 
   useEffect(() => {
     if (!reveal || !editorRef.current) return;
@@ -34,7 +51,39 @@ export function CodeEditor({
     editorRef.current.focus();
   }, [reveal]);
 
+  // Java: keep the cross-file symbol index fresh, then debounce a real `javac`
+  // compile and paint the errors as markers. Aborts the in-flight request when
+  // you keep typing so only the latest edit is graded.
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    const model = editorRef.current?.getModel();
+    if (!isJava || !monaco || !model) return;
+
+    const siblings: JavaSibling[] = javaSiblings ?? [];
+    setJavaSources(siblings.map((s) => s.content));
+
+    const controller = new AbortController();
+    const files = [...siblings.filter((s) => s.name !== fileName), { name: fileName, content: value }];
+    const timer = setTimeout(async () => {
+      try {
+        const diagnostics = await fetchJavaDiagnostics(files, controller.signal);
+        if (!controller.signal.aborted) applyJavaMarkers(monaco, model, fileName, diagnostics);
+      } catch {
+        // Docker down / offline: leave the editor clean rather than nagging.
+        if (!controller.signal.aborted) clearJavaMarkers(monaco, model);
+      }
+    }, 800);
+
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, fileName, isJava, siblingsSig]);
+
   const beforeMount = (monaco: Monaco) => {
+    monacoRef.current = monaco;
+    installJavaIntelliSense(monaco);
     // Treat .ts/.tsx uniformly and allow JSX so the editor doesn't flag valid
     // component code. We don't run Monaco's type-checker here (tests are the
     // source of truth), so silence semantic diagnostics to keep it clean.
@@ -70,8 +119,9 @@ export function CodeEditor({
       language={languageForPath(path)}
       path={path}
       value={value}
-      onMount={(editor) => {
+      onMount={(editor, monaco) => {
         editorRef.current = editor;
+        monacoRef.current = monaco;
         if (reveal) {
           editor.revealLineInCenter(reveal.line);
           editor.setPosition({ lineNumber: reveal.line, column: 1 });
