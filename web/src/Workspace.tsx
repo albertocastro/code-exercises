@@ -87,9 +87,12 @@ export function Workspace({
   const hasPreview = categoryId === "react" && !!files.previewCode;
   const key = `${categoryId}/${exercise.id}`;
   const hasJava = categoryId === "leetcode" && !!files.javaSolutionCode && !!files.javaTestCode;
+  // Java-only exercises ship no solution.ts — there's nothing to write in TypeScript,
+  // so we land the learner directly in Java and hide the language toggle entirely.
+  const javaOnly = hasJava && !files.solutionCode.trim();
   const languageStorageKey = `code-exercises-language:${key}`;
   const [language, setLanguage] = useState<ExerciseLanguage>(() =>
-    hasJava && localStorage.getItem(languageStorageKey) === "java" ? "java" : "typescript"
+    javaOnly || (hasJava && localStorage.getItem(languageStorageKey) === "java") ? "java" : "typescript"
   );
   const solutionDraftKey = language === "java" ? `${key}/java` : key;
   const scoreBaseKey = language === "java" ? `${key}/java` : key;
@@ -101,7 +104,7 @@ export function Workspace({
   const currentMainStarter = files.javaMainCode ?? "";
   const [code, setCode] = useState(() => {
     const initialLanguage: ExerciseLanguage =
-      hasJava && localStorage.getItem(languageStorageKey) === "java" ? "java" : "typescript";
+      javaOnly || (hasJava && localStorage.getItem(languageStorageKey) === "java") ? "java" : "typescript";
     const initialDraftKey = initialLanguage === "java" ? `${key}/java` : key;
     const initialStarter = initialLanguage === "java" ? files.javaSolutionCode ?? "" : files.solutionCode;
     const draft = getDraft(initialDraftKey);
@@ -814,7 +817,7 @@ export function Workspace({
         </h1>
 
         <div className="ws-controls">
-          {hasJava && (
+          {hasJava && !javaOnly && (
             <div className="language-switch" title="Exercise language">
               <button
                 className={`lbtn ${language === "typescript" ? "active" : ""}`}
@@ -828,6 +831,11 @@ export function Workspace({
               >
                 Java
               </button>
+            </div>
+          )}
+          {javaOnly && (
+            <div className="language-switch" title="This exercise is Java-only">
+              <span className="lbtn active" aria-disabled="true">Java</span>
             </div>
           )}
 

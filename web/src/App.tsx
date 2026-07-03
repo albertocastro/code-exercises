@@ -179,7 +179,10 @@ export function App() {
               >
                 <span className="row-id">{ex.id}</span>
                 <span className="row-copy">
-                  <span className="row-name">{ex.name}</span>
+                  <span className="row-name">
+                    {ex.name}
+                    <span className={`difficulty-tag ${ex.difficulty}`}>{ex.difficulty}</span>
+                  </span>
                   {ex.topic && <span className="row-topic">{ex.topic}</span>}
                 </span>
                 <span className={`badge ${done === ex.levels ? "complete" : ""}`}>

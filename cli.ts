@@ -359,13 +359,17 @@ async function main() {
     while (true) {
       const exChoice = await menu(
         cat.name,
-        cat.exercises,
+        cat.exercises.map(e => ({ id: e.id, name: `${e.name}  [${e.difficulty}]` })),
         { footer: "↑↓ navigate   enter select   ←/esc back   ctrl+c quit", allowBack: true }
       );
       if (exChoice === BACK) break;
       const ex = cat.exercises[exChoice];
       let language: ExerciseLanguage = "typescript";
-      if (cat.hasJava(ex.id)) {
+      // Java-only exercises have no solution.ts — land straight in Java, no prompt.
+      const javaOnly = cat.hasJava(ex.id) && !fs.existsSync(path.join(__dirname, ex.id, "solution.ts"));
+      if (javaOnly) {
+        language = "java";
+      } else if (cat.hasJava(ex.id)) {
         const langChoice = await menu(
           `${ex.name} — language`,
           [
