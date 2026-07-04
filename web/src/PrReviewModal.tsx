@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import type { PrReview, PrReviewComment } from "./insightsChat";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChatMessage, PrReview, PrReviewComment, PrReviewTheme } from "./insightsChat";
+import { getPrReviewTheme, savePrReviewTheme } from "./insightsChat";
 
 export type PrReviewState =
   | { status: "idle" | "loading" }
@@ -9,6 +10,14 @@ export type PrReviewState =
 // One highlighted line = a list of {content, color} spans. Plain-text fallback is
 // a single span with no color, so rendering is identical whether Shiki loaded.
 type HlLine = Array<{ content: string; color?: string }>;
+// Tokens for both themes, produced from a single highlighter build. The active
+// theme just picks which set to render — no rebuild on toggle.
+type HlByTheme = { dark: HlLine[]; light: HlLine[] };
+
+const SHIKI_THEME: Record<PrReviewTheme, string> = {
+  dark: "dark-plus",
+  light: "light-plus",
+};
 
 const verdictMeta: Record<PrReview["verdict"], { label: string; tone: string }> = {
   approve: { label: "Approved", tone: "approve" },
@@ -22,19 +31,30 @@ const severityLabel: Record<PrReviewComment["severity"], string> = {
   suggestion: "Suggestion",
 };
 
+function plainLines(code: string): HlLine[] {
+  return code.split("\n").map((line) => [{ content: line }]);
+}
+
 // Lazily build a standalone Shiki highlighter (independent of the Monaco theme
-// registry) and tokenize the whole file. Falls back to plain lines on any error.
-async function highlightLines(code: string, lang: string): Promise<HlLine[]> {
+// registry) with BOTH light and dark themes loaded once, and tokenize the whole
+// file against each. Falls back to plain lines (shared across themes) on any error.
+async function highlightLines(code: string, lang: string): Promise<HlByTheme> {
   try {
     const { createHighlighter } = await import("shiki");
     const highlighter = await createHighlighter({
-      themes: ["dark-plus"],
+      themes: [SHIKI_THEME.dark, SHIKI_THEME.light],
       langs: [lang],
     });
-    const { tokens } = highlighter.codeToTokens(code, { theme: "dark-plus", lang });
-    return tokens.map((line) => line.map((t) => ({ content: t.content, color: t.color })));
+    const toLines = (theme: string): HlLine[] =>
+      highlighter
+        // theme/lang are validated at build time above; Shiki's typed overloads
+        // want its bundled-name unions, so mirror the original string-literal call.
+        .codeToTokens(code, { theme: theme as never, lang: lang as never })
+        .tokens.map((line) => line.map((t) => ({ content: t.content, color: t.color })));
+    return { dark: toLines(SHIKI_THEME.dark), light: toLines(SHIKI_THEME.light) };
   } catch {
-    return code.split("\n").map((line) => [{ content: line }]);
+    const fallback = plainLines(code);
+    return { dark: fallback, light: fallback };
   }
 }
 
@@ -44,15 +64,153 @@ function langForFile(fileName: string): string {
   return "ts";
 }
 
+// Seed a comment's chat transcript for /api/review. The reviewer sees the original
+// comment as its own prior assistant turn, and the first user message is framed with
+// the line/severity so the reply stays anchored to what was flagged.
+function buildTranscript(comment: PrReviewComment, draft: string): ChatMessage[] {
+  const seed: ChatMessage = { role: "assistant", content: comment.body };
+  const framedFirst = `Re: line ${comment.line} (${severityLabel[comment.severity]}) — ${draft}`;
+  const replies = comment.replies ?? [];
+  if (replies.length === 0) {
+    return [seed, { role: "user", content: framedFirst }];
+  }
+  return [seed, ...replies, { role: "user", content: draft }];
+}
+
+function ReplyThread({
+  comment,
+  commentIndex,
+  onReplyToComment,
+  onPersistReplies,
+}: {
+  comment: PrReviewComment;
+  commentIndex: number;
+  onReplyToComment: (commentIndex: number, messages: ChatMessage[]) => Promise<string>;
+  onPersistReplies: (commentIndex: number, replies: ChatMessage[]) => void;
+}) {
+  const replies = comment.replies ?? [];
+  const [open, setOpen] = useState(replies.length > 0);
+  const [draft, setDraft] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (open) textareaRef.current?.focus();
+  }, [open]);
+
+  const send = async () => {
+    const trimmed = draft.trim();
+    if (!trimmed || pending) return;
+    setError(null);
+    // The transcript sent to the reviewer includes the pending user turn; the
+    // persisted thread mirrors it so a reopen shows the same messages.
+    const transcript = buildTranscript(comment, trimmed);
+    const userTurn: ChatMessage = { role: "user", content: trimmed };
+    const withUser = [...replies, userTurn];
+    onPersistReplies(commentIndex, withUser);
+    setPending(true);
+    try {
+      const answer = await onReplyToComment(commentIndex, transcript);
+      onPersistReplies(commentIndex, [...withUser, { role: "assistant", content: answer }]);
+      setDraft("");
+    } catch (e) {
+      // Roll back the optimistic user turn but keep the typed text so they can retry.
+      onPersistReplies(commentIndex, replies);
+      setDraft(trimmed);
+      setError(e instanceof Error ? e.message : "Reply failed. Try again.");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void send();
+    }
+  };
+
+  return (
+    <div className="pr-reply">
+      {replies.length > 0 && (
+        <div className="pr-reply-list">
+          {replies.map((m, i) => (
+            <div key={i} className={`pr-reply-bubble ${m.role}`}>
+              <span className="pr-reply-role">{m.role === "user" ? "You" : "Reviewer"}</span>
+              <p className="pr-reply-text">{m.content}</p>
+            </div>
+          ))}
+          {pending && (
+            <div className="pr-reply-bubble assistant pending" aria-live="polite">
+              <span className="pr-reply-role">Reviewer</span>
+              <p className="pr-reply-text">…thinking</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {open ? (
+        <div className="pr-reply-box">
+          <textarea
+            ref={textareaRef}
+            className="pr-reply-input"
+            value={draft}
+            placeholder="Reply to the reviewer… (Enter to send, Shift+Enter for newline)"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={onKeyDown}
+            rows={2}
+            disabled={pending}
+          />
+          {error && (
+            <div className="pr-reply-error" role="alert">
+              {error}
+            </div>
+          )}
+          <div className="pr-reply-actions">
+            <button
+              className="pr-thread-btn"
+              onClick={() => void send()}
+              disabled={pending || !draft.trim()}
+            >
+              {pending ? "Sending…" : "Send"}
+            </button>
+            {replies.length === 0 && (
+              <button
+                className="pr-thread-btn ghost"
+                onClick={() => {
+                  setOpen(false);
+                  setError(null);
+                }}
+                disabled={pending}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <button className="pr-thread-btn ghost" onClick={() => setOpen(true)}>
+          Comment
+        </button>
+      )}
+    </div>
+  );
+}
+
 function CommentThread({
   comment,
+  commentIndex,
   onAddActionItem,
-  onFollowUp,
+  onReplyToComment,
+  onPersistReplies,
   added,
 }: {
   comment: PrReviewComment;
+  commentIndex: number;
   onAddActionItem: (text: string) => void;
-  onFollowUp?: (comment: PrReviewComment) => void;
+  onReplyToComment: (commentIndex: number, messages: ChatMessage[]) => Promise<string>;
+  onPersistReplies: (commentIndex: number, replies: ChatMessage[]) => void;
   added: boolean;
 }) {
   return (
@@ -78,14 +236,25 @@ function CommentThread({
         >
           {added ? "Added ✓" : "Add to action items"}
         </button>
-        {onFollowUp && (
-          <button className="pr-thread-btn ghost" onClick={() => onFollowUp(comment)}>
-            Ask a follow-up
-          </button>
-        )}
       </div>
+      <ReplyThread
+        comment={comment}
+        commentIndex={commentIndex}
+        onReplyToComment={onReplyToComment}
+        onPersistReplies={onPersistReplies}
+      />
     </div>
   );
+}
+
+function initialTheme(): PrReviewTheme {
+  const persisted = getPrReviewTheme();
+  if (persisted) return persisted;
+  // Persisted choice wins; on first open, seed from prefers-color-scheme, else dark.
+  if (typeof window !== "undefined" && window.matchMedia) {
+    return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  }
+  return "dark";
 }
 
 export function PrReviewModal({
@@ -93,18 +262,29 @@ export function PrReviewModal({
   fileName,
   solutionCode,
   onAddActionItem,
-  onFollowUp,
+  onReplyToComment,
+  onPersistReplies,
   onClose,
 }: {
   state: PrReviewState;
   fileName: string;
   solutionCode: string;
   onAddActionItem: (text: string) => void;
-  onFollowUp?: (comment: PrReviewComment) => void;
+  onReplyToComment: (commentIndex: number, messages: ChatMessage[]) => Promise<string>;
+  onPersistReplies: (commentIndex: number, replies: ChatMessage[]) => void;
   onClose: () => void;
 }) {
-  const [lines, setLines] = useState<HlLine[]>([]);
+  const [hl, setHl] = useState<HlByTheme>({ dark: [], light: [] });
   const [added, setAdded] = useState<Set<string>>(new Set());
+  const [theme, setTheme] = useState<PrReviewTheme>(initialTheme);
+
+  const toggleTheme = () => {
+    setTheme((prev) => {
+      const next = prev === "dark" ? "light" : "dark";
+      savePrReviewTheme(next);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -118,27 +298,31 @@ export function PrReviewModal({
   useEffect(() => {
     let cancelled = false;
     // Seed a plain-text render immediately so the code shows before Shiki resolves.
-    setLines(solutionCode.split("\n").map((line) => [{ content: line }]));
-    void highlightLines(solutionCode, lang).then((hl) => {
-      if (!cancelled) setLines(hl);
+    const fallback = plainLines(solutionCode);
+    setHl({ dark: fallback, light: fallback });
+    void highlightLines(solutionCode, lang).then((next) => {
+      if (!cancelled) setHl(next);
     });
     return () => {
       cancelled = true;
     };
   }, [solutionCode, lang]);
 
+  const lines = theme === "light" ? hl.light : hl.dark;
+
   // Group comments by the line they anchor to, so each line can render its threads
-  // directly after it (a line may legitimately carry more than one comment).
+  // directly after it (a line may legitimately carry more than one comment). We keep
+  // each comment's stable index so reply persistence targets the right record.
   const commentsByLine = useMemo(() => {
-    const map = new Map<number, PrReviewComment[]>();
+    const map = new Map<number, Array<{ comment: PrReviewComment; index: number }>>();
     if (state.status !== "done") return map;
     const max = Math.max(1, lines.length);
-    for (const c of state.review.comments) {
+    state.review.comments.forEach((c, index) => {
       const line = Math.min(Math.max(1, c.line), max);
       const list = map.get(line) ?? [];
-      list.push(c);
+      list.push({ comment: c, index });
       map.set(line, list);
-    }
+    });
     return map;
   }, [state, lines.length]);
 
@@ -151,7 +335,12 @@ export function PrReviewModal({
 
   return (
     <div className="pr-backdrop" onClick={onClose}>
-      <div className="pr-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`pr-modal theme-${theme}`}
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="pr-header">
           <div className="pr-header-main">
             {verdict && <span className={`pr-verdict ${verdict.tone}`}>{verdict.label}</span>}
@@ -160,9 +349,19 @@ export function PrReviewModal({
               {state.status === "done" && <p className="pr-summary">{state.review.summary}</p>}
             </div>
           </div>
-          <button className="pr-close" aria-label="close review" onClick={onClose}>
-            ×
-          </button>
+          <div className="pr-header-controls">
+            <button
+              className="pr-theme-toggle"
+              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              onClick={toggleTheme}
+            >
+              {theme === "dark" ? "☀" : "☾"}
+            </button>
+            <button className="pr-close" aria-label="close review" onClick={onClose}>
+              ×
+            </button>
+          </div>
         </div>
 
         <div className="pr-body">
@@ -197,12 +396,14 @@ export function PrReviewModal({
                         )}
                       </code>
                     </div>
-                    {threads?.map((comment, k) => (
+                    {threads?.map(({ comment, index }) => (
                       <CommentThread
-                        key={k}
+                        key={index}
                         comment={comment}
+                        commentIndex={index}
                         onAddActionItem={handleAdd}
-                        onFollowUp={onFollowUp}
+                        onReplyToComment={onReplyToComment}
+                        onPersistReplies={onPersistReplies}
                         added={added.has(comment.body)}
                       />
                     ))}

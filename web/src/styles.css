@@ -1661,16 +1661,57 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   padding: 32px;
   background: rgba(0, 0, 0, 0.6);
 }
+/* Modal-scoped theme tokens. Both themes override the same --pr-* variables, so the
+   light/dark toggle just swaps the theme-* class on .pr-modal — nothing outside the
+   modal is re-themed. Dark mirrors the app's VS Code palette exactly. */
+.pr-modal.theme-dark {
+  --pr-bg: #1e1e1e;
+  --pr-panel: #252526;
+  --pr-panel-2: #2d2d2d;
+  --pr-border: #3c3c3c;
+  --pr-text: #d4d4d4;
+  --pr-muted: #858585;
+  --pr-accent: #4fc1ff;
+  --pr-accent-2: #0e639c;
+  --pr-green: #4ec9b0;
+  --pr-warn: #d7a35b;
+  --pr-warn-text: #e2b877;
+  --pr-error-text: #f4a89b;
+  --pr-green-soft: rgba(78, 201, 176, 0.18);
+  --pr-warn-soft: rgba(215, 163, 91, 0.16);
+  --pr-user-bubble: #0e639c;
+  --pr-user-text: #ffffff;
+  --pr-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.pr-modal.theme-light {
+  --pr-bg: #ffffff;
+  --pr-panel: #f6f8fa;
+  --pr-panel-2: #eef1f4;
+  --pr-border: #d0d7de;
+  --pr-text: #1f2328;
+  --pr-muted: #6e7781;
+  --pr-accent: #0969da;
+  --pr-accent-2: #0969da;
+  --pr-green: #1a7f5a;
+  --pr-warn: #bf8700;
+  --pr-warn-text: #9a6700;
+  --pr-error-text: #cf222e;
+  --pr-green-soft: rgba(26, 127, 90, 0.12);
+  --pr-warn-soft: rgba(191, 135, 0, 0.14);
+  --pr-user-bubble: #0969da;
+  --pr-user-text: #ffffff;
+  --pr-shadow: 0 24px 60px rgba(31, 35, 40, 0.25);
+}
 .pr-modal {
   display: flex;
   flex-direction: column;
   width: min(920px, 100%);
   max-height: 90vh;
-  background: var(--panel);
-  border: 1px solid var(--border);
+  background: var(--pr-panel);
+  border: 1px solid var(--pr-border);
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--pr-shadow);
 }
 .pr-header {
   display: flex;
@@ -1678,13 +1719,29 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   justify-content: space-between;
   gap: 12px;
   padding: 16px 18px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel-2);
+  border-bottom: 1px solid var(--pr-border);
+  background: var(--pr-panel-2);
 }
+.pr-header-controls { display: flex; align-items: center; gap: 4px; flex: none; }
+.pr-theme-toggle {
+  background: transparent;
+  border: 1px solid var(--pr-border);
+  color: var(--pr-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pr-theme-toggle:hover { color: var(--pr-accent); border-color: var(--pr-accent); }
 .pr-header-main { display: flex; align-items: flex-start; gap: 12px; }
 .pr-header-text { display: flex; flex-direction: column; gap: 4px; }
-.pr-file { color: var(--text); font-family: ui-monospace, monospace; font-size: 13px; }
-.pr-summary { margin: 0; color: var(--muted); font-size: 13px; max-width: 640px; }
+.pr-file { color: var(--pr-text); font-family: ui-monospace, monospace; font-size: 13px; }
+.pr-summary { margin: 0; color: var(--pr-muted); font-size: 13px; max-width: 640px; }
 .pr-verdict {
   flex: none;
   padding: 4px 10px;
@@ -1694,31 +1751,31 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-.pr-verdict.approve { background: rgba(78, 201, 176, 0.18); color: var(--green); border: 1px solid var(--green); }
-.pr-verdict.comment { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
-.pr-verdict.changes { background: rgba(215, 163, 91, 0.16); color: #e2b877; border: 1px solid #d7a35b; }
+.pr-verdict.approve { background: var(--pr-green-soft); color: var(--pr-green); border: 1px solid var(--pr-green); }
+.pr-verdict.comment { background: var(--pr-panel); color: var(--pr-text); border: 1px solid var(--pr-border); }
+.pr-verdict.changes { background: var(--pr-warn-soft); color: var(--pr-warn-text); border: 1px solid var(--pr-warn); }
 .pr-close {
   flex: none;
   background: transparent;
   border: none;
-  color: var(--muted);
+  color: var(--pr-muted);
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
 }
-.pr-close:hover { color: var(--text); }
+.pr-close:hover { color: var(--pr-text); }
 
 .pr-body { overflow: auto; padding: 0; }
-.pr-loading, .pr-error { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 48px 24px; color: var(--muted); }
+.pr-loading, .pr-error { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 48px 24px; color: var(--pr-muted); }
 .pr-error { align-items: flex-start; padding: 24px; }
-.pr-error strong { color: #f4a89b; }
+.pr-error strong { color: var(--pr-error-text); }
 .pr-error p { margin: 0; }
 
 .pr-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12.5px;
   line-height: 1.6;
-  background: var(--bg);
+  background: var(--pr-bg);
 }
 .pr-line { display: flex; align-items: flex-start; }
 .pr-gutter {
@@ -1726,30 +1783,30 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   width: 44px;
   padding: 0 10px;
   text-align: right;
-  color: var(--muted);
+  color: var(--pr-muted);
   user-select: none;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--pr-border);
 }
 .pr-line-code {
   flex: 1;
   padding: 0 14px;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--text);
+  color: var(--pr-text);
 }
 
 .pr-thread {
   margin: 6px 14px 10px 44px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--pr-border);
   border-left-width: 3px;
   border-radius: 8px;
-  background: var(--panel);
+  background: var(--pr-panel);
   padding: 10px 12px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 13px;
 }
-.pr-thread.praise { border-left-color: var(--green); }
-.pr-thread.nit, .pr-thread.suggestion { border-left-color: #d7a35b; }
+.pr-thread.praise { border-left-color: var(--pr-green); }
+.pr-thread.nit, .pr-thread.suggestion { border-left-color: var(--pr-warn); }
 .pr-thread-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .pr-severity {
   padding: 2px 8px;
@@ -1759,29 +1816,29 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-.pr-severity.praise { background: rgba(78, 201, 176, 0.18); color: var(--green); }
-.pr-severity.nit, .pr-severity.suggestion { background: rgba(215, 163, 91, 0.16); color: #e2b877; }
-.pr-thread-line { color: var(--muted); font-size: 11px; }
-.pr-thread-body { margin: 0; color: var(--text); line-height: 1.5; }
+.pr-severity.praise { background: var(--pr-green-soft); color: var(--pr-green); }
+.pr-severity.nit, .pr-severity.suggestion { background: var(--pr-warn-soft); color: var(--pr-warn-text); }
+.pr-thread-line { color: var(--pr-muted); font-size: 11px; }
+.pr-thread-body { margin: 0; color: var(--pr-text); line-height: 1.5; }
 .pr-suggestion {
   margin-top: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--pr-border);
   border-radius: 6px;
   overflow: hidden;
 }
 .pr-suggestion-label {
   padding: 4px 10px;
-  background: var(--panel-2);
-  color: var(--muted);
+  background: var(--pr-panel-2);
+  color: var(--pr-muted);
   font-size: 11px;
   font-weight: 600;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--pr-border);
 }
 .pr-suggestion-code {
   margin: 0;
   padding: 8px 10px;
-  background: var(--bg);
-  color: var(--green);
+  background: var(--pr-bg);
+  color: var(--pr-green);
   font-family: ui-monospace, monospace;
   font-size: 12px;
   white-space: pre-wrap;
@@ -1789,8 +1846,8 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 }
 .pr-thread-actions { display: flex; gap: 8px; margin-top: 10px; }
 .pr-thread-btn {
-  background: var(--accent-2);
-  border: 1px solid var(--accent-2);
+  background: var(--pr-accent-2);
+  border: 1px solid var(--pr-accent-2);
   color: #fff;
   padding: 5px 10px;
   border-radius: 6px;
@@ -1799,8 +1856,55 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 }
 .pr-thread-btn:hover:not(:disabled) { filter: brightness(1.12); }
 .pr-thread-btn:disabled { opacity: 0.6; cursor: default; }
-.pr-thread-btn.ghost { background: transparent; color: var(--text); border-color: var(--border); }
-.pr-thread-btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
+.pr-thread-btn.ghost { background: transparent; color: var(--pr-text); border-color: var(--pr-border); }
+.pr-thread-btn.ghost:hover:not(:disabled) { border-color: var(--pr-accent); color: var(--pr-accent); }
+
+/* ── Per-comment reply thread (GitHub-style: bubbles above, reply box below) ── */
+.pr-reply { margin-top: 10px; border-top: 1px solid var(--pr-border); padding-top: 10px; }
+.pr-reply-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.pr-reply-bubble {
+  border: 1px solid var(--pr-border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  max-width: 90%;
+}
+.pr-reply-bubble.user {
+  align-self: flex-end;
+  background: var(--pr-user-bubble);
+  border-color: var(--pr-user-bubble);
+}
+.pr-reply-bubble.user .pr-reply-role { color: rgba(255, 255, 255, 0.75); }
+.pr-reply-bubble.user .pr-reply-text { color: var(--pr-user-text); }
+.pr-reply-bubble.assistant { align-self: flex-start; background: var(--pr-panel-2); }
+.pr-reply-bubble.pending .pr-reply-text { color: var(--pr-muted); font-style: italic; }
+.pr-reply-role {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pr-muted);
+  margin-bottom: 3px;
+}
+.pr-reply-text { margin: 0; color: var(--pr-text); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.pr-reply-box { display: flex; flex-direction: column; gap: 8px; }
+.pr-reply-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  background: var(--pr-bg);
+  color: var(--pr-text);
+  border: 1px solid var(--pr-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pr-reply-input:focus { outline: none; border-color: var(--pr-accent); }
+.pr-reply-input:disabled { opacity: 0.6; }
+.pr-reply-error { color: var(--pr-error-text); font-size: 12px; }
+.pr-reply-actions { display: flex; gap: 8px; }
 
 /* ── App crash backstop ── */
 .app-crash { max-width: 560px; margin: 60px auto; padding: 24px; background: var(--panel); border: 1px solid #5a3a3a; border-radius: 12px; }

@@ -43,6 +43,7 @@ import {
   savePrReview,
   saveCodeQualityScore,
   type ActionItem,
+  type ChatMessage,
   type CodeQualityScore,
   type PrReview,
   type ScoreAnalysis,
@@ -152,6 +153,8 @@ export function Workspace({
   const [prReviews, setPrReviews] = useState<Record<string, PrReviewState>>({});
   // Which scope's PR-review modal is open (null = closed).
   const [prReviewScope, setPrReviewScope] = useState<QualityScoreScope | null>(null);
+  // Level the open PR review was generated for; reused by per-comment reply calls.
+  const [prReviewLevel, setPrReviewLevel] = useState<number>(1);
   const [historyFile, setHistoryFile] = useState<DraftFile | null>(null);
   const [layout, setLayout] = useState<Layout>(
     () => (localStorage.getItem(LAYOUT_KEY) as Layout) || "split"
@@ -750,6 +753,7 @@ export function Workspace({
 
   const openPrReview = (scope: QualityScoreScope, targetLevel: number) => {
     setPrReviewScope(scope);
+    setPrReviewLevel(targetLevel);
     void ensurePrReview(targetLevel, { scope });
   };
 
@@ -762,6 +766,53 @@ export function Workspace({
     if (next) {
       setQualityScores((prev) => ({ ...prev, [scoreKey]: { status: "done", score: next } }));
     }
+  };
+
+  // Reply to a specific PR comment. Reuses the multi-turn /api/review tutor chat
+  // (same endpoint InsightsPanel uses) with the same exercise context, passing the
+  // per-comment transcript so the reviewer answers in context. Returns the
+  // assistant's free-text reply; throws on failure so the modal can show an inline
+  // error without losing the user's typed text.
+  const replyToPrComment = async (
+    targetLevel: number,
+    messages: ChatMessage[]
+  ): Promise<string> => {
+    const res = await fetch("/api/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        categoryId,
+        exerciseId: exercise.id,
+        level: targetLevel,
+        language,
+        solution: code,
+        readme: files.readme,
+        perfSpec: files.perfCode,
+        messages,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Reply failed");
+    return String(data.output || "(no reply)");
+  };
+
+  // Persist a comment's reply thread into the scope's cached PR review so reopening
+  // the modal restores the conversation. Mutates only the matching comment (by index)
+  // and keeps the in-memory prReviews state in sync.
+  const persistPrCommentReplies = (
+    scope: QualityScoreScope,
+    commentIndex: number,
+    replies: ChatMessage[]
+  ) => {
+    const reviewKey = `${scoreBaseKey}/${scope}`;
+    const current = getPrReview(reviewKey);
+    if (!current) return;
+    const nextComments = current.comments.map((c, i) =>
+      i === commentIndex ? { ...c, replies } : c
+    );
+    const next: PrReview = { ...current, comments: nextComments };
+    savePrReview(reviewKey, next);
+    setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "done", review: next } }));
   };
 
   // ── reusable panel bodies ──
@@ -1231,6 +1282,12 @@ export function Workspace({
           fileName={currentSolutionPath.slice(1)}
           solutionCode={code}
           onAddActionItem={(text) => addPrCommentToActionItems(prReviewScope, text)}
+          onReplyToComment={(_commentIndex, messages) =>
+            replyToPrComment(prReviewLevel, messages)
+          }
+          onPersistReplies={(commentIndex, replies) =>
+            persistPrCommentReplies(prReviewScope, commentIndex, replies)
+          }
           onClose={() => setPrReviewScope(null)}
         />
       )}
