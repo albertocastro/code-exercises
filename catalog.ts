@@ -10,6 +10,13 @@ export interface ExerciseMeta {
   levels: number;
   topic?: string;
   difficulty: Difficulty;
+  /**
+   * Open-ended: a single test suite (no cumulative levels), all-or-nothing.
+   * The learner owns the layout and all implementation details; the only
+   * contract is a documented set of `data-testid`s and the black-box tests
+   * that assert against them. Such exercises ship with `levels: 1`.
+   */
+  open?: boolean;
 }
 
 export interface CategoryMeta {
@@ -82,6 +89,7 @@ export const CATALOG: CategoryMeta[] = [
       { id: "26_camera_recorder", name: "Security Camera Recorder", levels: 4, difficulty: "medium", topic: "Timers, refs, overlay positioning, and component state from a mockup" },
       { id: "27_camera_wall", name: "Security Camera Wall", levels: 4, difficulty: "medium", topic: "Camera grid layout, shared selection, and per-tile recording state" },
       { id: "28_camera_grid", name: "Live Camera Grid", levels: 4, difficulty: "hard", topic: "Fetch API + REST backend, polling timers, Flexbox + positioning, and component architecture from a mockup" },
+      { id: "30_tip_calculator", name: "Tip Calculator", levels: 1, difficulty: "medium", open: true, topic: "Open-ended: build any layout; contract is test IDs + behavior" },
     ],
   },
 ];
