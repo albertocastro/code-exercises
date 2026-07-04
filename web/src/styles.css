@@ -1414,6 +1414,50 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   padding-top: 0;
   border-top: none;
 }
+/* Open-ended exercise spec panel — banner + required test-ID contract chips. */
+.open-spec {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent-2);
+  border-radius: 10px;
+  background: rgba(79, 193, 255, 0.06);
+}
+.open-spec-banner {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.open-spec-banner strong { color: var(--accent); }
+.open-spec-ids { margin-top: 12px; }
+.open-spec-ids-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.testid-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.testid-chip {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+.testid-chip code {
+  font-size: 11.5px;
+  color: var(--green);
+  background: none;
+  padding: 0;
+}
 .quality-spinner {
   width: 28px;
   height: 28px;

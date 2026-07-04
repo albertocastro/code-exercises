@@ -108,6 +108,26 @@ function validateLearnerName(raw: string, existing: string[]): string | null {
 const SELF_IMPORT_RE =
   /(?:from\s+["']|require\(\s*["'])(?:\.\/|\/)solution(?:\.[tj]sx?)?["']/;
 
+// For open-ended exercises the ONLY contract is a set of `data-testid`s that the
+// black-box test file queries. Extract those literals from the test source so we
+// can surface the contract to the learner. We match both the RTL query form
+// (`getByTestId("...")`, `queryByTestId`, `findByTestId`, `AllByTestId`) and any
+// literal `data-testid="..."` a test might use. Preserves first-seen order.
+const TEST_ID_RE = /(?:ByTestId\(\s*["'`]([^"'`]+)["'`]|data-testid\s*=\s*["'`]([^"'`]+)["'`])/g;
+
+function extractTestIds(testCode: string): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const match of testCode.matchAll(TEST_ID_RE)) {
+    const id = match[1] ?? match[2];
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  return ids;
+}
+
 function isCorruptSolutionDraft(draft: string, files: ExerciseFiles): boolean {
   const normalizedDraft = draft.trim();
   if (!normalizedDraft) return false;
@@ -134,6 +154,17 @@ export function Workspace({
 }) {
   const hasPreview = categoryId === "react" && !!files.previewCode;
   const key = `${categoryId}/${exercise.id}`;
+  // Open-ended exercises are a single all-or-nothing suite: the learner owns the
+  // whole layout and the only contract is a set of `data-testid`s. We suppress the
+  // level UI for these (levels:1 means the single level IS the whole exercise, so
+  // every score/PR/pixel scope already resolves to "exercise" — see submit /
+  // onResult / openSummary / insightsScope). The required test IDs are sourced
+  // straight from the loaded test file (files.testCode), the source of truth.
+  const isOpen = exercise.open === true;
+  const requiredTestIds = useMemo(
+    () => (isOpen ? extractTestIds(files.testCode) : []),
+    [isOpen, files.testCode]
+  );
   const hasJava = categoryId === "leetcode" && !!files.javaSolutionCode && !!files.javaTestCode;
   // Java-only exercises ship no solution.ts — there's nothing to write in TypeScript,
   // so we land the learner directly in Java and hide the language toggle entirely.
@@ -1007,6 +1038,26 @@ export function Workspace({
     <>
       <div className="panel-head">README</div>
       <div className="panel-body scroll">
+        {isOpen && (
+          <div className="open-spec">
+            <p className="open-spec-banner">
+              Open-ended — you design the layout. Build against the test-ID contract
+              below, and use <strong>+ Add file</strong> for extra components or CSS.
+            </p>
+            {requiredTestIds.length > 0 && (
+              <div className="open-spec-ids">
+                <div className="open-spec-ids-head">Required test IDs</div>
+                <ul className="testid-chips">
+                  {requiredTestIds.map((id) => (
+                    <li key={id} className="testid-chip">
+                      <code>{id}</code>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
         <Markdown source={files.readme} />
         {retakeScore && (retakeScore.actionItems.length > 0 || retakeScore.studyPlan.length > 0) && (
           <div className="retake-goals">
@@ -1264,23 +1315,25 @@ export function Workspace({
             </button>
           </div>
 
-          <div className="dots">
-            {Array.from({ length: exercise.levels }, (_, i) => i + 1).map((n) => {
-              const locked = n > unlocked;
-              const done = !!prog.levels[n]?.submittedAt;
-              return (
-                <button
-                  key={n}
-                  className={`dot ${n === level ? "active" : ""} ${done ? "done" : ""} ${locked ? "locked" : ""}`}
-                  disabled={locked}
-                  onClick={() => !locked && onLevel(n)}
-                  title={locked ? "Locked — submit the previous level" : `Level ${n}`}
-                >
-                  {locked ? "🔒" : done ? "✓" : n}
-                </button>
-              );
-            })}
-          </div>
+          {!isOpen && (
+            <div className="dots">
+              {Array.from({ length: exercise.levels }, (_, i) => i + 1).map((n) => {
+                const locked = n > unlocked;
+                const done = !!prog.levels[n]?.submittedAt;
+                return (
+                  <button
+                    key={n}
+                    className={`dot ${n === level ? "active" : ""} ${done ? "done" : ""} ${locked ? "locked" : ""}`}
+                    disabled={locked}
+                    onClick={() => !locked && onLevel(n)}
+                    title={locked ? "Locked — submit the previous level" : `Level ${n}`}
+                  >
+                    {locked ? "🔒" : done ? "✓" : n}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           <button
             className={`submit ${canSubmit ? "ready" : ""}`}
@@ -1341,10 +1394,14 @@ export function Workspace({
         <div className="banner-row">
           {complete && (
             <div className="exercise-insights">
-              <span className="banner done">All {exercise.levels} levels complete</span>
+              <span className="banner done">
+                {isOpen ? "Exercise complete" : `All ${exercise.levels} levels complete`}
+              </span>
               <span>Total time: {fmtTime(completedTime)}</span>
               <span>Runs: {completedAttempts || "0"}</span>
-              <span>Avg / level: {fmtTime(exercise.levels ? completedTime / exercise.levels : 0)}</span>
+              {!isOpen && (
+                <span>Avg / level: {fmtTime(exercise.levels ? completedTime / exercise.levels : 0)}</span>
+              )}
               <button
                 className="banner-action"
                 onClick={() => openSummary(submittedLevels.at(-1) ?? exercise.levels)}
