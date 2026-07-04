@@ -160,6 +160,16 @@ export function Workspace({
   const nextConsoleId = useRef(1);
   const mainAbortRef = useRef<AbortController | null>(null);
   const mainRunIdRef = useRef(0);
+  // Synchronous in-flight registry for quality scoring, keyed by `${scoreKey}#${solutionHash}`.
+  // The persisted score (carrying its solutionHash) is only written AFTER the /api/score
+  // fetch resolves, and the `loading` status lives in async React state that a stale
+  // render closure may not have observed yet. So two ensureQualityScore calls for the
+  // same scope+hash (the pre-warm → Submit hand-off, or a fast double-Submit) could each
+  // slip past the persisted-hash and `loading` guards and both fire a fetch. Because
+  // /api/score is nondeterministic, that yields two different scores for identical code.
+  // This ref is set before the fetch and cleared after, giving a render-independent
+  // guarantee: at most one agent call is in flight per (scope, solution content).
+  const scoringInFlight = useRef<Set<string>>(new Set());
 
   const submitted = !!prog.levels[level]?.submittedAt;
   const unlocked = prog.unlockedLevel;
@@ -519,8 +529,15 @@ export function Workspace({
     }
 
     // Code differs from any cached score, so a fresh run is needed. Don't stack a
-    // second request when one is already in flight for this scope.
-    if (qualityScores[scoreKey]?.status === "loading") return;
+    // second request when one is already in flight for this scope. The `loading`
+    // React-state check catches the common case; the synchronous ref below closes the
+    // render-timing gap (a stale closure that hasn't seen the `loading` state yet) so a
+    // duplicate no-change request can never re-call the nondeterministic agent.
+    const inFlightKey = `${scoreKey}#${solutionHash}`;
+    if (qualityScores[scoreKey]?.status === "loading" || scoringInFlight.current.has(inFlightKey)) {
+      return;
+    }
+    scoringInFlight.current.add(inFlightKey);
 
     clearCodeQualityScore(scoreKey);
     setQualityScores((prev) => ({ ...prev, [scoreKey]: { status: "loading" } }));
@@ -626,6 +643,8 @@ export function Workspace({
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setQualityScores((prev) => ({ ...prev, [scoreKey]: { status: "error", error: message } }));
+    } finally {
+      scoringInFlight.current.delete(inFlightKey);
     }
   };
 
