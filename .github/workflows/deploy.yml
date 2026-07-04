@@ -104,7 +104,19 @@ jobs:
           # deploy loudly instead of going green while the app is down. No
           # auto-rollback (no valuable server-side data here) — a RED run plus
           # the last 80 journal lines is enough to diagnose.
-          curl -fsS --retry 5 --retry-delay 3 http://127.0.0.1:3200/ >/dev/null \
-            || { echo "Health check FAILED: app not serving on :3200 after restart"; sudo journalctl -u code-exercises --no-pager -n 80; exit 1; }
-          echo "Health check OK: app serving on 127.0.0.1:3200"
+          # Poll until the app serves (the container takes a couple seconds to
+          # recreate + boot Node after the restart). --retry-connrefused is
+          # required: curl's --retry alone does NOT retry connection-refused,
+          # which is exactly what we get during the boot window.
+          if curl -fsS --retry 10 --retry-delay 2 --retry-connrefused --max-time 10 \
+               http://127.0.0.1:3200/ >/dev/null; then
+            echo "Health check OK: app serving on 127.0.0.1:3200"
+          else
+            echo "Health check FAILED: app not serving on :3200 after restart"
+            # journalctl for this unit is world-readable to the deploy user
+            # without sudo (default journald ACLs); avoid sudo here so a missing
+            # NOPASSWD rule can't mask the real failure with a tty prompt.
+            journalctl -u code-exercises --no-pager -n 80 2>/dev/null || true
+            exit 1
+          fi
           EOF
