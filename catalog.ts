@@ -82,6 +82,7 @@ export const CATALOG: CategoryMeta[] = [
       { id: "26_camera_recorder", name: "Security Camera Recorder", levels: 4, difficulty: "medium", topic: "Timers, refs, overlay positioning, and component state from a mockup" },
       { id: "27_camera_wall", name: "Security Camera Wall", levels: 4, difficulty: "medium", topic: "Camera grid layout, shared selection, and per-tile recording state" },
       { id: "28_camera_grid", name: "Live Camera Grid", levels: 4, difficulty: "hard", topic: "Fetch API + REST backend, polling timers, Flexbox + positioning, and component architecture from a mockup" },
+      { id: "29_call_log", name: "Call Log", levels: 4, difficulty: "medium", topic: "Read model → filter → aggregate → sort pipeline for a monitoring dashboard" },
     ],
   },
 ];
