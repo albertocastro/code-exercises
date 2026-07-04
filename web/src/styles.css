@@ -1993,3 +1993,130 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 .app-crash h2 { margin-top: 0; color: #f4a89b; }
 .app-crash pre { white-space: pre-wrap; background: #2a1d1d; border: 1px solid #5a3a3a; border-radius: 8px; padding: 10px 12px; color: #f4a89b; font-size: 12px; }
 .app-crash-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+/* ── AI Pixel Perfect ──
+   Card lives in the insights panel (reuses .insights-pr-review layout). The modal
+   inherits the app's dark palette via the global --* tokens (no per-modal theme
+   toggle, unlike the PR-review modal). Green = praise, amber = nit, red = issue. */
+.pp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.6);
+}
+.pp-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  max-height: 90vh;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.pp-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.pp-header-main { display: flex; align-items: flex-start; gap: 12px; }
+.pp-header-text { display: flex; flex-direction: column; gap: 4px; }
+.pp-header-controls { display: flex; align-items: center; gap: 10px; flex: none; }
+.pp-title { color: var(--text); font-size: 14px; }
+.pp-summary { margin: 0; color: var(--muted); font-size: 13px; max-width: 520px; }
+.pp-verdict {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.pp-verdict.approve { background: rgba(78, 201, 176, 0.18); color: #4ec9b0; border: 1px solid #4ec9b0; }
+.pp-verdict.comment { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+.pp-verdict.changes { background: rgba(215, 163, 91, 0.16); color: #e2b877; border: 1px solid #d7a35b; }
+.pp-score {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  color: var(--text);
+  font-weight: 800;
+}
+.pp-score span { font-size: 22px; }
+.pp-score small { color: var(--muted); font-size: 12px; font-weight: 600; }
+.pp-close {
+  flex: none;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pp-close:hover { color: var(--text); }
+.pp-body { overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; }
+.pp-loading, .pp-error { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 14px; }
+.pp-error { flex-direction: column; align-items: flex-start; gap: 4px; }
+.pp-error strong { color: #f4a89b; }
+.pp-empty { color: var(--muted); font-size: 13px; margin: 0; }
+
+/* Screenshot frame — shows exactly what the reviewer judged. */
+.pp-shot { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.pp-shot img {
+  width: 100%;
+  height: auto;
+  max-height: 360px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+.pp-shot figcaption { color: var(--muted); font-size: 11px; text-align: center; }
+
+.pp-findings { display: flex; flex-direction: column; gap: 14px; }
+.pp-group { display: flex; flex-direction: column; gap: 8px; }
+.pp-group-head {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.pp-finding-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.pp-finding {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.pp-finding.praise { border-left-color: #4ec9b0; }
+.pp-finding.nit { border-left-color: #d7a35b; }
+.pp-finding.issue { border-left-color: #d16969; }
+.pp-severity {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.pp-severity.praise { background: rgba(78, 201, 176, 0.18); color: #4ec9b0; }
+.pp-severity.nit { background: rgba(215, 163, 91, 0.16); color: #e2b877; }
+.pp-severity.issue { background: rgba(209, 105, 105, 0.18); color: #f4a89b; }
+.pp-observation { margin: 0; color: var(--text); font-size: 13px; line-height: 1.5; }

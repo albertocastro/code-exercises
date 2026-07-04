@@ -346,8 +346,10 @@ export function InsightsPanel({
   complete,
   storageKey,
   showAiReview,
+  showPixelPerfect,
   onToggleClaim,
   onOpenPrReview,
+  onOpenPixelPerfect,
   onNext,
   onClose,
 }: {
@@ -362,8 +364,10 @@ export function InsightsPanel({
   complete: boolean;
   storageKey: string;
   showAiReview: boolean;
+  showPixelPerfect?: boolean;
   onToggleClaim?: (text: string) => void;
   onOpenPrReview?: () => void;
+  onOpenPixelPerfect?: () => void;
   onNext: () => void;
   onClose: () => void;
 }) {
@@ -497,6 +501,18 @@ export function InsightsPanel({
                 </div>
                 <button className="run-btn" onClick={onOpenPrReview}>
                   AI review
+                </button>
+              </div>
+            )}
+
+            {showPixelPerfect && onOpenPixelPerfect && (
+              <div className="insights-pr-review">
+                <div className="insights-pr-review-copy">
+                  <strong>AI Pixel Perfect</strong>
+                  <p>Get a vision-model design critique of your rendered preview.</p>
+                </div>
+                <button className="run-btn" onClick={onOpenPixelPerfect}>
+                  AI Pixel Perfect
                 </button>
               </div>
             )}

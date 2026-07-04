@@ -46,14 +46,19 @@ import {
   updatePrRevisionReplies,
   hashSolution,
   saveCodeQualityScore,
+  getPixelPerfect,
+  savePixelPerfect,
   type ActionItem,
   type ChatMessage,
   type CodeQualityScore,
+  type PixelPerfectResult,
   type PrRevision,
   type ScoreAnalysis,
   type StudyTopic,
 } from "./insightsChat";
 import { PrReviewModal, type PrReviewState } from "./PrReviewModal";
+import { PixelPerfectModal, type PixelPerfectState } from "./PixelPerfectModal";
+import { capturePreviewScreenshot, stripDataUrlPrefix } from "./captureScreenshot";
 
 type Layout = "split" | "columns";
 type DiagnosticsTab = "preview" | "tests" | "console";
@@ -201,6 +206,10 @@ export function Workspace({
   const [prReviewScope, setPrReviewScope] = useState<QualityScoreScope | null>(null);
   // Level the open PR review was generated for; reused by per-comment reply calls.
   const [prReviewLevel, setPrReviewLevel] = useState<number>(1);
+  // AI Pixel Perfect: cached vision critique per scope, and which scope's modal is
+  // open (null = closed). Overwrite semantics — re-running replaces the cached result.
+  const [pixelPerfect, setPixelPerfect] = useState<Record<string, PixelPerfectState>>({});
+  const [pixelPerfectScope, setPixelPerfectScope] = useState<QualityScoreScope | null>(null);
   const [historyFile, setHistoryFile] = useState<DraftFile | null>(null);
   const [layout, setLayout] = useState<Layout>(
     () => (localStorage.getItem(LAYOUT_KEY) as Layout) || "split"
@@ -850,6 +859,72 @@ export function Workspace({
     void ensurePrReview(targetLevel, { scope });
   };
 
+  // AI Pixel Perfect — resolve the display state for a scope: prefer in-memory
+  // (loading/error/fresh), else fall back to a cached critique from localStorage.
+  const pixelPerfectForScope = (scope: QualityScoreScope): PixelPerfectState => {
+    const ppKey = `${scoreBaseKey}/${scope}`;
+    const current = pixelPerfect[ppKey];
+    if (current) return current;
+    const cached = getPixelPerfect(ppKey);
+    return cached ? { status: "done", result: cached } : { status: "idle" };
+  };
+
+  // Capture the learner's live `.preview-host` via html2canvas, POST the base64 PNG
+  // to /api/pixel-perfect, and cache the normalized critique (with the screenshot).
+  // Overwrite semantics: a fresh run replaces the previous cached result. Reuses the
+  // cached result when the code hasn't changed (mirrors ensureQualityScore dedup).
+  const ensurePixelPerfect = async (targetLevel: number, scope: QualityScoreScope) => {
+    const ppKey = `${scoreBaseKey}/${scope}`;
+    const solutionHash = hashSolution(code);
+    const cached = getPixelPerfect(ppKey);
+    if (cached && cached.solutionHash === solutionHash) {
+      setPixelPerfect((prev) => ({ ...prev, [ppKey]: { status: "done", result: cached } }));
+      return;
+    }
+    if (pixelPerfect[ppKey]?.status === "loading") return;
+
+    setPixelPerfect((prev) => ({ ...prev, [ppKey]: { status: "loading" } }));
+    try {
+      // Read the live DOM at click time — capture whatever is currently rendered.
+      const dataUrl = await capturePreviewScreenshot();
+      const res = await fetch("/api/pixel-perfect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          categoryId,
+          exerciseId: exercise.id,
+          level: targetLevel,
+          readme: files.readme,
+          screenshot: stripDataUrlPrefix(dataUrl),
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Design review failed");
+
+      const parsed = JSON.parse(data.output);
+      const result: PixelPerfectResult = {
+        verdict:
+          parsed.verdict === "good" || parsed.verdict === "poor" ? parsed.verdict : "needs-work",
+        score: Math.max(0, Math.min(100, Math.round(Number(parsed.score)) || 0)),
+        summary: String(parsed.summary || "Design review is ready."),
+        findings: Array.isArray(parsed.findings) ? parsed.findings : [],
+        screenshot: dataUrl,
+        createdAt: Date.now(),
+        solutionHash,
+      };
+      savePixelPerfect(ppKey, result);
+      setPixelPerfect((prev) => ({ ...prev, [ppKey]: { status: "done", result } }));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setPixelPerfect((prev) => ({ ...prev, [ppKey]: { status: "error", error: message } }));
+    }
+  };
+
+  const openPixelPerfect = (scope: QualityScoreScope, targetLevel: number) => {
+    setPixelPerfectScope(scope);
+    void ensurePixelPerfect(targetLevel, scope);
+  };
+
   // "Add to action items" from a PR comment: append it to the scope's saved score
   // (deduped) so it joins the retake checklist. Falls back to per-level scope when
   // the exercise-level score isn't populated yet.
@@ -1371,8 +1446,12 @@ export function Workspace({
           complete={prog.unlockedLevel > exercise.levels}
           storageKey={`${scoreBaseKey}/${insightsScope}`}
           showAiReview={insightsSubmitted}
+          showPixelPerfect={
+            insightsSubmitted && categoryId === "react" && exercise.open === true && hasPreview
+          }
           onToggleClaim={(text) => toggleActionItemClaim(insightsScope, text)}
           onOpenPrReview={() => openPrReview(insightsScope, insightsLevel)}
+          onOpenPixelPerfect={() => openPixelPerfect(insightsScope, insightsLevel)}
           onNext={() => {
             const next = insightsLevel + 1;
             setInsightsLevel(null);
@@ -1404,6 +1483,12 @@ export function Workspace({
             persistPrCommentReplies(prReviewScope, revisionIndex, commentIndex, replies)
           }
           onClose={() => setPrReviewScope(null)}
+        />
+      )}
+      {pixelPerfectScope !== null && (
+        <PixelPerfectModal
+          state={pixelPerfectForScope(pixelPerfectScope)}
+          onClose={() => setPixelPerfectScope(null)}
         />
       )}
     </div>

@@ -1,6 +1,7 @@
 const CHAT_PREFIX = "code-exercises-insights-chat:";
 const QUALITY_PREFIX = "code-exercises-quality-score:";
 const PR_REVIEW_PREFIX = "code-exercises-pr-review:";
+const PIXEL_PERFECT_PREFIX = "code-exercises-pixel-perfect:";
 const LAYOUT_KEY = "code-exercises-insights-layout";
 const PR_REVIEW_THEME_KEY = "code-exercises-pr-review-theme";
 
@@ -87,6 +88,29 @@ export type PrRevision = {
   verdict: "approve" | "comment" | "changes";
   summary: string;
   comments: PrReviewComment[];
+};
+
+// AI Pixel Perfect — a vision-model design critique of the learner's rendered
+// preview (React open-ended exercises only). One finding = one specific,
+// evidence-based observation, tagged with a design category and a severity that
+// reuses the PR-review praise/nit/issue language.
+export type PixelPerfectFinding = {
+  category: "spacing" | "color" | "typography" | "readability" | "hierarchy" | "consistency";
+  severity: "praise" | "nit" | "issue";
+  observation: string;
+};
+export type PixelPerfectResult = {
+  verdict: "good" | "needs-work" | "poor";
+  score: number;
+  summary: string;
+  findings: PixelPerfectFinding[];
+  // The exact screenshot (data URL) that was judged, persisted so reopening the
+  // modal shows the learner precisely what the critique was based on.
+  screenshot: string;
+  createdAt: number;
+  // Hash of the solution the critique was generated from; lets a reopen reuse the
+  // cached result when the code hasn't changed.
+  solutionHash?: string;
 };
 
 // Small, fast, dependency-free string hash (djb2) for change-detection only.
@@ -372,6 +396,69 @@ export function updatePrRevisionReplies(
 
 export function clearPrReview(key: string) {
   localStorage.removeItem(PR_REVIEW_PREFIX + key);
+}
+
+const PIXEL_PERFECT_CATEGORIES: readonly PixelPerfectFinding["category"][] = [
+  "spacing",
+  "color",
+  "typography",
+  "readability",
+  "hierarchy",
+  "consistency",
+];
+
+function pixelPerfectCategory(value: unknown): PixelPerfectFinding["category"] {
+  return PIXEL_PERFECT_CATEGORIES.includes(value as PixelPerfectFinding["category"])
+    ? (value as PixelPerfectFinding["category"])
+    : "consistency";
+}
+
+function parsePixelPerfectFindings(value: unknown): PixelPerfectFinding[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (f: unknown): f is PixelPerfectFinding =>
+        typeof f === "object" &&
+        f !== null &&
+        typeof (f as PixelPerfectFinding).observation === "string"
+    )
+    .map((f): PixelPerfectFinding => ({
+      category: pixelPerfectCategory(f.category),
+      severity: f.severity === "praise" || f.severity === "nit" ? f.severity : "issue",
+      observation: f.observation.trim(),
+    }))
+    .filter((f) => f.observation);
+}
+
+// Read the last pixel-perfect critique for a scope. Overwrite semantics: there is
+// no revision history — the newest result replaces the previous one.
+export function getPixelPerfect(key: string): PixelPerfectResult | null {
+  try {
+    const value = localStorage.getItem(PIXEL_PERFECT_PREFIX + key);
+    if (!value) return null;
+    const parsed = JSON.parse(value);
+    if (typeof parsed?.summary !== "string" || !Array.isArray(parsed?.findings)) return null;
+    return {
+      verdict:
+        parsed.verdict === "good" || parsed.verdict === "poor" ? parsed.verdict : "needs-work",
+      score: Math.max(0, Math.min(100, Math.round(Number(parsed.score)) || 0)),
+      summary: parsed.summary,
+      findings: parsePixelPerfectFindings(parsed.findings),
+      screenshot: typeof parsed.screenshot === "string" ? parsed.screenshot : "",
+      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
+      solutionHash: typeof parsed.solutionHash === "string" ? parsed.solutionHash : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function savePixelPerfect(key: string, result: PixelPerfectResult) {
+  localStorage.setItem(PIXEL_PERFECT_PREFIX + key, JSON.stringify(result));
+}
+
+export function clearPixelPerfect(key: string) {
+  localStorage.removeItem(PIXEL_PERFECT_PREFIX + key);
 }
 
 // Append a PR-review comment as a retake action item on the scope's saved score,

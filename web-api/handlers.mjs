@@ -577,7 +577,11 @@ function normalizeScoreOutput(output) {
   });
 }
 
-function runAgent(p, ext, prompt, outputFile) {
+// Run one of the codex text agents (score/review/pr-review) or the pixel-perfect
+// vision agent. `screenshotBase64` (optional) is a raw base64 PNG with no data-url
+// prefix; when present AND we're using the DEFAULT codex command path, it's written
+// to <dir>/screenshot.png and passed to codex as an image input via `-i`.
+function runAgent(p, ext, prompt, outputFile, screenshotBase64) {
   const dir = mkdtempSync(path.join(tmpdir(), "exercise-review-"));
   const outputPath = path.join(dir, outputFile);
   writeFileSync(path.join(dir, `solution.${ext}`), p.solution ?? "");
@@ -587,13 +591,26 @@ function runAgent(p, ext, prompt, outputFile) {
   const configuredCmd = process.env.EXERCISE_AGENT_CMD;
   const model = process.env.EXERCISE_AGENT_MODEL || "gpt-5.4-mini";
   const effort = process.env.EXERCISE_AGENT_EFFORT || "low";
+
+  // Only the DEFAULT codex path supports the `-i <image>` flag. A custom
+  // EXERCISE_AGENT_CMD may not, so we run it text-only and ignore any screenshot.
+  let imageArg = "";
+  if (screenshotBase64 && !configuredCmd) {
+    const imgPath = path.join(dir, "screenshot.png");
+    writeFileSync(imgPath, Buffer.from(screenshotBase64, "base64"));
+    // CRITICAL: the `--` after `-i <path>` terminates codex's variadic `-i` so it
+    // doesn't swallow the trailing `-` stdin marker. Without it, codex fails with
+    // "No prompt provided via stdin".
+    imageArg = `-i ${JSON.stringify(imgPath)} -- `;
+  }
+
   const cmd = configuredCmd
     ? `${configuredCmd} -`
     : `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --model ${JSON.stringify(
         model
       )} -c ${JSON.stringify(`model_reasoning_effort="${effort}"`)} --output-last-message ${JSON.stringify(
         outputPath
-      )} -`;
+      )} ${imageArg}-`;
 
   return new Promise((resolve, reject) => {
     const proc = spawn("bash", ["-lc", cmd], { cwd: dir, stdio: ["pipe", "pipe", "pipe"] });
@@ -714,6 +731,111 @@ export async function runAgentPrReview(p) {
 }
 
 // ---------------------------------------------------------------------------
+// AI Pixel Perfect — vision critique of the learner's rendered preview
+// ---------------------------------------------------------------------------
+
+// Design-review prompt for the attached screenshot of the learner's rendered UI.
+// The model is a demanding-but-fair design reviewer: it must ground every point
+// in what it can SEE (specific elements, approximate pixel values) and return
+// STRICT JSON only. Mirrors the coaching tone of the PR-review prompt: praise
+// what deserves it, flag concrete issues, never generic "could look better".
+function buildPixelPerfectPrompt(p) {
+  return (
+    `You are a meticulous senior product designer performing a "pixel perfect" ` +
+    `design review of the ATTACHED SCREENSHOT — the learner's actually-rendered UI ` +
+    `for a coding exercise. Judge ONLY what is visible in the image; do not review ` +
+    `the source code. Be demanding but fair, and coach like a mentor: this is a ` +
+    `LEARNING platform.\n\n` +
+    `Evaluate the screenshot IN THIS ORDER and let findings map to these categories:\n` +
+    `1. spacing — spacing/grid rhythm: does padding/margin/gap follow a consistent 4px/8px ` +
+    `scale? Flag arbitrary or inconsistent values (e.g. a 13px gap next to a 16px one).\n` +
+    `2. color — color & contrast: is text readable against its background? Flag over-saturation, ` +
+    `clashing hues, and decorative color used where functional color is needed.\n` +
+    `3. typography — type scale & hierarchy: is there a clear H1/H2/body scale? Flag weight ` +
+    `misuse, cramped or loose line-height, and over-long line length.\n` +
+    `4. readability — density & whitespace: is the layout too dense or too sparse? Is muted/secondary ` +
+    `text contrast sufficient to read comfortably?\n` +
+    `5. hierarchy — visual hierarchy: is the primary element clearly dominant, or does everything ` +
+    `compete for attention?\n` +
+    `6. consistency — alignment & consistency: consistent corner radii, button/input styling, and ` +
+    `aligned edges? Flag misaligned or mismatched elements.\n` +
+    `7. consistency — gradient/effect misuse: flag purposeless gradients, shadow overuse, or effects ` +
+    `that add noise without meaning.\n\n` +
+    `Every observation MUST be SPECIFIC and evidence-based, referencing the concrete element and, ` +
+    `where possible, approximate measurements — e.g. "the top-right button uses ~13px vertical padding ` +
+    `while the card below it uses 16px" — NOT vague statements like "the spacing could be better". ` +
+    `Include BOTH praise and issues: when the design does something well, say so (at least one "praise" ` +
+    `finding when deserved). Use the exercise README below only for context on what the UI is meant to be.\n\n` +
+    `Respond with the JSON object ONLY — no reasoning, no preamble, no markdown fences. ` +
+    `Return only a JSON object with this exact shape and no markdown:\n` +
+    `{"verdict":"good|needs-work|poor","score":number,"summary":"string","findings":[{"category":"spacing|color|typography|readability|hierarchy|consistency","severity":"praise|nit|issue","observation":"string"}]}\n\n` +
+    `"score" is 0-100 (90-100 polished, 75-89 solid with small issues, 55-74 rough, below 55 needs real work). ` +
+    `"verdict" is "good" for a polished design, "needs-work" for solid-but-improvable, "poor" for a design ` +
+    `with significant problems. Keep "summary" to one or two empathetic sentences. Provide at most 8 findings, ` +
+    `each observation a single concrete sentence.` +
+    `\n\n--- README.md (exercise context) ---\n${p.readme ?? ""}\n`
+  );
+}
+
+const PIXEL_PERFECT_CATEGORIES = new Set([
+  "spacing",
+  "color",
+  "typography",
+  "readability",
+  "hierarchy",
+  "consistency",
+]);
+const PIXEL_PERFECT_SEVERITIES = new Set(["praise", "nit", "issue"]);
+
+// Never trust the raw model JSON shape: extract the first `{`/last `}`, parse,
+// clamp the verdict/score, whitelist each finding's category + severity, trim
+// strings, drop empty observations, and cap findings. Mirrors the score /
+// pr-review normalizers.
+function normalizePixelPerfectOutput(output) {
+  const start = output.indexOf("{");
+  const end = output.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Pixel-perfect agent did not return JSON.");
+  }
+
+  const parsed = JSON.parse(output.slice(start, end + 1));
+  const verdict =
+    parsed.verdict === "good" || parsed.verdict === "poor" ? parsed.verdict : "needs-work";
+  const score = Math.max(0, Math.min(100, Math.round(Number(parsed.score))));
+
+  return JSON.stringify({
+    verdict,
+    score: Number.isFinite(score) ? score : 0,
+    summary: typeof parsed.summary === "string" ? parsed.summary : "Design review is ready.",
+    findings: Array.isArray(parsed.findings)
+      ? parsed.findings
+          .filter(
+            (f) => typeof f === "object" && f !== null && typeof f.observation === "string"
+          )
+          .map((f) => ({
+            category: PIXEL_PERFECT_CATEGORIES.has(f.category) ? f.category : "consistency",
+            severity: PIXEL_PERFECT_SEVERITIES.has(f.severity) ? f.severity : "issue",
+            observation: f.observation.trim(),
+          }))
+          .filter((f) => f.observation)
+          .slice(0, 8)
+      : [],
+  });
+}
+
+export async function runAgentPixelPerfect(p) {
+  const ext = solutionExt(p);
+  const output = await runAgent(
+    p,
+    ext,
+    buildPixelPerfectPrompt(p),
+    "pixel-perfect-output.txt",
+    p.screenshot
+  );
+  return normalizePixelPerfectOutput(output);
+}
+
+// ---------------------------------------------------------------------------
 // Per-exercise backends (/api/ex/<id>/*)
 // ---------------------------------------------------------------------------
 
@@ -751,14 +873,31 @@ async function loadBackend(file) {
 // prod router in server/index.mjs: handler receives (req, res) and `req.url` is
 // the path relative to the mounted prefix.
 export function registerApiRoutes(use) {
+  // A base64 PNG screenshot is the only large field any agent accepts. Cap the
+  // accumulated request body at ~5MB so an oversized (or hostile) payload can't
+  // grow unbounded — the body accumulator is otherwise uncapped.
+  const MAX_AGENT_BODY_BYTES = 5 * 1024 * 1024;
+
   const agentHandler = (kind) => (req, res) => {
     if (req.method !== "POST") {
       res.statusCode = 405;
       return res.end("Method Not Allowed");
     }
     let body = "";
-    req.on("data", (c) => (body += c));
+    let aborted = false;
+    req.on("data", (c) => {
+      if (aborted) return;
+      body += c;
+      if (body.length > MAX_AGENT_BODY_BYTES) {
+        aborted = true;
+        res.statusCode = 413;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ ok: false, error: "Screenshot too large (max ~5MB)." }));
+        req.destroy();
+      }
+    });
     req.on("end", () => {
+      if (aborted) return;
       let payload;
       try {
         payload = JSON.parse(body || "{}");
@@ -767,7 +906,13 @@ export function registerApiRoutes(use) {
         return res.end(JSON.stringify({ ok: false, error: "Invalid JSON" }));
       }
       const run =
-        kind === "score" ? runAgentScore : kind === "pr-review" ? runAgentPrReview : runAgentReview;
+        kind === "score"
+          ? runAgentScore
+          : kind === "pr-review"
+            ? runAgentPrReview
+            : kind === "pixel-perfect"
+              ? runAgentPixelPerfect
+              : runAgentReview;
       run(payload)
         .then((output) => {
           res.setHeader("Content-Type", "application/json");
@@ -784,6 +929,7 @@ export function registerApiRoutes(use) {
   use("/api/review", agentHandler("review"));
   use("/api/score", agentHandler("score"));
   use("/api/pr-review", agentHandler("pr-review"));
+  use("/api/pixel-perfect", agentHandler("pixel-perfect"));
 
   use("/api/java-test", async (req, res) => {
     if (req.method !== "POST") {
