@@ -1,0 +1,52 @@
+# Local run of the code-exercises Web IDE in Docker.
+#
+# Port 3200 is deliberate: next-role uses 3000 and LearnOS uses 3100 on the
+# shared box, so code-exercises picks 3200 to avoid colliding with them.
+#
+# SECURITY: Java execution runs IN-PROCESS inside this container (the image
+# bakes in a JDK; the app spawns javac/java as unprivileged child processes in
+# a locked-down temp workdir). There is NO host Docker socket mount and the
+# container runs as a NON-ROOT user (uid/gid 1001). This deliberately replaced
+# an earlier docker-out-of-docker design that mounted /var/run/docker.sock and
+# ran as root — root-equivalent host access we do not want on a shared box.
+
+services:
+  code-exercises:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: code-exercises:local
+    container_name: code-exercises
+    restart: unless-stopped
+    # Run as the non-root app user baked into the image (uid/gid 1001). Stated
+    # here too so it is obvious at the compose layer and survives image changes.
+    user: "1001:1001"
+    ports:
+      # host:container — change the host side if 3200 is taken locally.
+      - "3200:3200"
+    environment:
+      NODE_ENV: production
+      PORT: 3200
+      HOSTNAME: 0.0.0.0
+      # codex CLI home/config/auth for the non-root app user. The named volume
+      # below mounts here. Log in on the host first (`codex login`) so this is
+      # populated, then copy/mount that state in.
+      CODEX_HOME: /home/appuser/.codex
+      # In-process Java runner knobs (see Dockerfile). JAVA_WORK_ROOT points at
+      # the tmpfs mount below so all Java scratch state is in-memory + disposable.
+      JAVA_WORK_ROOT: /tmp/code-exercises-java
+      JAVA_MAX_HEAP: 256m
+    # Disposable, size-capped in-memory scratch for untrusted Java compiles/runs.
+    # tmpfs means a runaway submission can't fill the container's disk, and
+    # nothing persists between runs.
+    tmpfs:
+      - /tmp/code-exercises-java:mode=1777,size=256m
+    volumes:
+      # codex CLI auth/config. Populate on the host (`codex login`) and mount so
+      # auth is never baked into the image. /api/review and /api/score degrade
+      # gracefully if this is empty/unauthenticated.
+      - code-exercises-codex-home:/home/appuser/.codex
+    # No /var/run/docker.sock mount — Java runs in-process, not via a daemon.
+
+volumes:
+  code-exercises-codex-home:

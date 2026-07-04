@@ -6,6 +6,8 @@
     "runtime:install": "node scripts/runtime.mjs install all",
     "runtime:up": "node scripts/runtime.mjs up all",
     "start": "tsx cli.ts",
+    "serve": "node server/index.mjs",
+    "start:server": "node server/index.mjs",
     "test": "jest",
     "watch": "jest --watchAll",
     "test:react": "vitest run",
@@ -27,7 +29,6 @@
     "jsdom": "^25.0.1",
     "prettier": "^3.8.4",
     "ts-jest": "^29.2.3",
-    "tsx": "^4.22.4",
     "typescript": "^5.4.5",
     "vite": "^5.4.21",
     "vitest": "^2.1.9"
@@ -58,6 +59,7 @@
     "react-resizable-panels": "^2.1.9",
     "remark-gfm": "^4.0.1",
     "shiki": "^1.29.2",
-    "sucrase": "^3.35.1"
+    "sucrase": "^3.35.1",
+    "tsx": "^4.22.4"
   }
 }

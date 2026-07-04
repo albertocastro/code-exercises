@@ -1,0 +1,101 @@
+name: Deploy code-exercises
+
+# Separate, self-contained workflow. It only ever touches code-exercises on
+# the box (git checkout at ~/code-exercises + the code-exercises.service
+# unit). It never restarts, rebuilds, or reads any next-role-* or learnos
+# service — those have their own workflows.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Namespaced so it can't serialize against next-role's or learnos's deploy
+  # concurrency.
+  group: deploy-code-exercises-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # --ignore-scripts: the repo's `postinstall` (scripts/runtime.mjs install
+      # all) only verifies a JDK is present for the in-process Java runner. The
+      # CI runner has no JDK and doesn't run Java exercises, so skip it — the JDK
+      # is baked into the app image and checked at container startup instead.
+      - run: npm ci --ignore-scripts
+
+      # CI validates the app builds and tests pass. Note: unlike next-role-2,
+      # we do NOT ship node_modules or the build to the box — the box rebuilds
+      # the Docker image from source itself (see the deploy step), so the CI
+      # runner's architecture is irrelevant. This is purely a gate.
+      - name: Build (static web IDE bundle)
+        run: npm run web:build
+
+      - name: Unit tests (jest)
+        run: npm test
+
+      - name: Component tests (vitest)
+        run: npm run test:react
+
+      - name: Join tailnet
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Add SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          # Tailnet DNS can take a few seconds to propagate after joining; an
+          # immediate keyscan returns nothing and later ssh dies with "Host key
+          # verification failed". Retry; accept-new on the ssh call is the real
+          # safety net.
+          for i in 1 2 3 4 5; do
+            ssh-keyscan -H "${{ vars.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null && break
+            echo "ssh-keyscan attempt $i failed; retrying in 3s"
+            sleep 3
+          done
+
+      # Ship the CI checkout to the box with rsync (mirrors next-role-2 and
+      # learnos). The box therefore needs NO GitHub credentials for this
+      # private repo — the runner is already authed and holds the source.
+      # --delete keeps ~/code-exercises a faithful mirror of main; the
+      # excludes never ship or wipe build junk, and /var/lib/code-exercises
+      # (runtime state) lives outside ~/code-exercises so it's never touched.
+      - name: Sync source to the box
+        run: |
+          rsync -az --delete --info=stats1 \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude 'node_modules/' \
+            --exclude 'dist-web/' \
+            -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new" \
+            ./ deploy@${{ vars.DEPLOY_HOST }}:~/code-exercises/
+
+      - name: Rebuild image and restart on the box
+        run: |
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new \
+            deploy@${{ vars.DEPLOY_HOST }} bash -s <<'EOF'
+          set -euo pipefail
+          cd ~/code-exercises
+          # Rebuild the image on the box (arch-correct, no cross-arch
+          # node_modules concern) and restart. `systemctl restart` runs
+          # ExecStop (compose down) then ExecStart (compose up) with the
+          # freshly built image. Persistent state under /var/lib/code-exercises
+          # is bind-mounted, so it survives the recreate untouched.
+          docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml build
+          sudo systemctl restart code-exercises
+          sudo systemctl --no-pager --lines=0 status code-exercises
+          EOF
