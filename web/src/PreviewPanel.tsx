@@ -1,5 +1,6 @@
-import { Component, useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { compilePreview } from "./runner/preview";
+import type { LearnerFiles } from "./runner/modules";
 import type { ConsoleSink } from "./runner/consoleCapture";
 
 const URL_CHANGE_EVENT = "code-exercises:urlchange";
@@ -67,15 +68,20 @@ export function PreviewPanel({
   previewCode,
   solutionCode,
   stylesCode,
+  learnerFiles,
   standaloneUrl,
   onConsole,
 }: {
   previewCode: string;
   solutionCode: string;
   stylesCode?: string;
+  learnerFiles?: LearnerFiles;
   standaloneUrl?: string;
   onConsole?: ConsoleSink;
 }) {
+  // Stable key over learner-file contents so the compile effect re-runs when a
+  // learner file changes, but not on unrelated renders.
+  const learnerFilesSig = useMemo(() => JSON.stringify(learnerFiles ?? {}), [learnerFiles]);
   const [Demo, setDemo] = useState<ComponentType | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
@@ -125,14 +131,15 @@ export function PreviewPanel({
 
   useEffect(() => {
     try {
-      const C = compilePreview(previewCode, solutionCode, onConsole, stylesCode);
+      const C = compilePreview(previewCode, solutionCode, onConsole, stylesCode, learnerFiles);
       setDemo(() => C);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setDemo(null);
     }
-  }, [previewCode, solutionCode, stylesCode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewCode, solutionCode, stylesCode, learnerFilesSig]);
 
   useEffect(() => {
     setDraftUrl(url);

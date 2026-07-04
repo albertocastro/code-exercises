@@ -512,6 +512,33 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 .file-name { flex: 1; }
 .file .ro { font-size: 9.5px; color: var(--muted); opacity: 0.7; }
 .ro-tag { margin-left: 8px; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
+.explorer-add {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10.5px;
+  padding: 2px 6px;
+  line-height: 1.4;
+  margin-left: auto;
+  margin-right: 6px;
+}
+.explorer-add:hover { color: var(--accent); border-color: var(--accent-2); }
+.file-row { display: flex; align-items: center; }
+.file-row .file { width: auto; flex: 1; }
+.file-delete {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 8px;
+  opacity: 0;
+}
+.file-row:hover .file-delete { opacity: 0.7; }
+.file-delete:hover { color: var(--accent); opacity: 1; }
 
 .run-btn {
   background: transparent;
