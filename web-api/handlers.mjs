@@ -631,6 +631,88 @@ export async function runAgentScore(p) {
   return normalizeScoreOutput(output);
 }
 
+function buildPrReviewPrompt(p, ext) {
+  const currentLevel = p.level ?? "unknown";
+  const solution = p.solution ?? "";
+  const lineCount = solution.length ? solution.split("\n").length : 0;
+
+  return (
+    `You are a patient programming tutor performing a GitHub-pull-request-style review of the ` +
+    `solution below for a coding exercise. Your main goal is to teach the learner how to REASON ` +
+    `about their code, not to hand over a finished rewrite. Prefer guiding questions and directional ` +
+    `hints over solutions — this is a LEARNING platform. ` +
+    `The learner is working through the exercise INCREMENTALLY, one level at a time, and is ` +
+    `currently on level ${currentLevel}. The README's "Levels" section lists the levels as a ` +
+    `numbered list, where item n describes the requirements introduced at level n. ` +
+    `Evaluate ONLY the requirements for levels 1 through ${currentLevel} (inclusive). ` +
+    `Any functionality described for levels ABOVE ${currentLevel} is OUT OF SCOPE and is not ` +
+    `expected to exist yet: its absence, incompleteness, or stubbed/placeholder state must NOT ` +
+    `be flagged as a mistake, a missing piece, or a weakness. ` +
+    `(When the current level is the last level, this naturally means the entire spec is in scope.)\n\n` +
+    `Leave inline comments anchored to specific lines of the submitted solution file, exactly like a ` +
+    `human reviewer would on a pull request. Each comment targets one 1-based line number that exists ` +
+    `in the submitted solution.${lineCount ? ` The submitted solution.${ext} has ${lineCount} lines; ` +
+      `every "line" you return MUST be between 1 and ${lineCount}.` : ""} ` +
+    `Keep it tight: at most 5 comments total, and include at least 1 "praise" comment when the code ` +
+    `deserves it. Use "severity" of "praise" for encouragement, "nit" for small style/clarity points, ` +
+    `and "suggestion" for something worth reconsidering. In each "body", coach the learner: ask a ` +
+    `question or point at what to inspect rather than dictating the exact fix. ` +
+    `Only include a "suggestion" field when a concrete single-line or small-block replacement is ` +
+    `genuinely apt; it should be the replacement text for that line/block and nothing else. Omit it otherwise.\n\n` +
+    `Also give an overall "verdict": "approve" when the in-scope work is solid, "comment" for neutral ` +
+    `observations with nothing blocking, or "changes" when something in scope should be reconsidered. ` +
+    `The "summary" is one or two sentences of empathetic, high-level feedback.\n\n` +
+    `Respond with the JSON object ONLY — no reasoning, no preamble, no markdown fences. ` +
+    `Return only a JSON object with this exact shape and no markdown:\n` +
+    `{"verdict":"approve|comment|changes","summary":"string","comments":[{"line":number,"severity":"praise|nit|suggestion","body":"string","suggestion":"string"}]}\n\n` +
+    `Reminder: the learner is on level ${currentLevel}; judge only levels 1 through ${currentLevel} and ` +
+    `treat any higher levels as not yet expected (no penalty for unimplemented future levels).` +
+    inlineContext(p, ext)
+  );
+}
+
+function normalizePrReviewOutput(output) {
+  const start = output.indexOf("{");
+  const end = output.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("PR review agent did not return JSON.");
+  }
+
+  const parsed = JSON.parse(output.slice(start, end + 1));
+  const verdict =
+    parsed.verdict === "approve" || parsed.verdict === "changes" ? parsed.verdict : "comment";
+
+  return JSON.stringify({
+    verdict,
+    summary: typeof parsed.summary === "string" ? parsed.summary : "Review is ready.",
+    comments: Array.isArray(parsed.comments)
+      ? parsed.comments
+          .filter((c) => typeof c === "object" && c !== null && typeof c.body === "string")
+          .map((c) => {
+            const line = Math.max(1, Math.round(Number(c.line)));
+            return {
+              line: Number.isFinite(line) ? line : 1,
+              severity:
+                c.severity === "praise" || c.severity === "nit" ? c.severity : "suggestion",
+              body: c.body.trim(),
+              suggestion:
+                typeof c.suggestion === "string" && c.suggestion.trim()
+                  ? c.suggestion.replace(/\n+$/, "")
+                  : undefined,
+            };
+          })
+          .filter((c) => c.body)
+          .slice(0, 5)
+      : [],
+  });
+}
+
+export async function runAgentPrReview(p) {
+  const ext = solutionExt(p);
+  const output = await runAgent(p, ext, buildPrReviewPrompt(p, ext), "pr-review-output.txt");
+  return normalizePrReviewOutput(output);
+}
+
 // ---------------------------------------------------------------------------
 // Per-exercise backends (/api/ex/<id>/*)
 // ---------------------------------------------------------------------------
@@ -684,7 +766,8 @@ export function registerApiRoutes(use) {
         res.statusCode = 400;
         return res.end(JSON.stringify({ ok: false, error: "Invalid JSON" }));
       }
-      const run = kind === "score" ? runAgentScore : runAgentReview;
+      const run =
+        kind === "score" ? runAgentScore : kind === "pr-review" ? runAgentPrReview : runAgentReview;
       run(payload)
         .then((output) => {
           res.setHeader("Content-Type", "application/json");
@@ -700,6 +783,7 @@ export function registerApiRoutes(use) {
 
   use("/api/review", agentHandler("review"));
   use("/api/score", agentHandler("score"));
+  use("/api/pr-review", agentHandler("pr-review"));
 
   use("/api/java-test", async (req, res) => {
     if (req.method !== "POST") {
