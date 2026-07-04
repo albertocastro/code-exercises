@@ -1792,6 +1792,61 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 }
 .pr-close:hover { color: var(--pr-text); }
 
+/* Revision selector (header) — prev/next around a "Revision N of M" label. Only
+   shown when there is more than one revision. */
+.pr-rev-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--pr-border);
+  border-radius: 6px;
+  background: var(--pr-panel);
+  padding: 1px;
+}
+.pr-rev-btn {
+  background: transparent;
+  border: none;
+  color: var(--pr-muted);
+  width: 22px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pr-rev-btn:hover:not(:disabled) { color: var(--pr-accent); background: var(--pr-panel-2); }
+.pr-rev-btn:disabled { opacity: 0.4; cursor: default; }
+.pr-rev-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--pr-text);
+  white-space: nowrap;
+}
+.pr-rev-latest {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--pr-green-soft);
+  color: var(--pr-green);
+  border: 1px solid var(--pr-green);
+}
+/* Revision metadata strip below the header (timestamp + snapshot-unavailable note). */
+.pr-rev-meta {
+  padding: 6px 18px;
+  font-size: 12px;
+  color: var(--pr-muted);
+  background: var(--pr-panel);
+  border-bottom: 1px solid var(--pr-border);
+}
+.pr-rev-warn { color: var(--pr-warn-text); }
+.pr-comment-list { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; }
+.pr-empty { margin: 0; color: var(--pr-muted); font-size: 13px; }
+
 .pr-body { overflow: auto; padding: 0; }
 .pr-loading, .pr-error { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 48px 24px; color: var(--pr-muted); }
 .pr-error { align-items: flex-start; padding: 24px; }

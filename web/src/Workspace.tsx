@@ -40,16 +40,16 @@ import { formatCode } from "./formatCode";
 import {
   addActionItemToScore,
   clearCodeQualityScore,
-  clearPrReview,
   getCodeQualityScore,
-  getPrReview,
+  getPrRevisions,
+  appendPrRevision,
+  updatePrRevisionReplies,
   hashSolution,
-  savePrReview,
   saveCodeQualityScore,
   type ActionItem,
   type ChatMessage,
   type CodeQualityScore,
-  type PrReview,
+  type PrRevision,
   type ScoreAnalysis,
   type StudyTopic,
 } from "./insightsChat";
@@ -767,27 +767,30 @@ export function Workspace({
     const current = prReviews[reviewKey];
     if (current) return current;
 
-    const cached = getPrReview(reviewKey);
-    return cached ? { status: "done", review: cached } : { status: "idle" };
+    const cached = getPrRevisions(reviewKey);
+    return cached.length ? { status: "done", revisions: cached } : { status: "idle" };
   };
 
-  // On-demand PR-style review. Mirrors ensureQualityScore: cache by solutionHash so
-  // re-opening the modal on unchanged code skips the agent round-trip.
+  // On-demand PR-style review with a REVISION HISTORY. Each request after a code
+  // change appends a new revision (capturing the reviewed code as its own
+  // snapshot); earlier revisions and their reply threads are never overwritten. If
+  // the LATEST revision already matches the current code hash, reuse it — no fetch,
+  // no duplicate revision (mirrors the ensureQualityScore dedup).
   const ensurePrReview = async (
     targetLevel: number,
     options: { scope: QualityScoreScope }
   ) => {
     const reviewKey = `${scoreBaseKey}/${options.scope}`;
-    const previous = getPrReview(reviewKey);
+    const history = getPrRevisions(reviewKey);
+    const latest = history.at(-1);
     const solutionHash = hashSolution(code);
-    if (previous && previous.solutionHash === solutionHash) {
-      setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "done", review: previous } }));
+    if (latest && latest.solutionHash === solutionHash) {
+      setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "done", revisions: history } }));
       return;
     }
 
     if (prReviews[reviewKey]?.status === "loading") return;
 
-    clearPrReview(reviewKey);
     setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "loading" } }));
     try {
       const res = await fetch("/api/pr-review", {
@@ -807,7 +810,12 @@ export function Workspace({
       if (!data.ok) throw new Error(data.error || "Review failed");
 
       const parsed = JSON.parse(data.output);
-      const review: PrReview = {
+      const revision: PrRevision = {
+        createdAt: Date.now(),
+        solutionHash,
+        // Capture the EXACT code reviewed; comments are line-anchored to this.
+        solutionSnapshot: code,
+        snapshotAvailable: true,
         verdict:
           parsed.verdict === "approve" || parsed.verdict === "changes" ? parsed.verdict : "comment",
         summary: String(parsed.summary || "Review is ready."),
@@ -826,12 +834,10 @@ export function Workspace({
                   typeof c.suggestion === "string" && c.suggestion.trim() ? c.suggestion : undefined,
               }))
           : [],
-        createdAt: Date.now(),
-        solutionHash,
       };
 
-      savePrReview(reviewKey, review);
-      setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "done", review } }));
+      const nextHistory = appendPrRevision(reviewKey, revision);
+      setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "done", revisions: nextHistory } }));
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "error", error: message } }));
@@ -855,15 +861,25 @@ export function Workspace({
     }
   };
 
-  // Reply to a specific PR comment. Reuses the multi-turn /api/review tutor chat
-  // (same endpoint InsightsPanel uses) with the same exercise context, passing the
-  // per-comment transcript so the reviewer answers in context. Returns the
-  // assistant's free-text reply; throws on failure so the modal can show an inline
-  // error without losing the user's typed text.
+  // Reply to a specific PR comment on a specific revision. Reuses the multi-turn
+  // /api/review tutor chat (same endpoint InsightsPanel uses) with the same
+  // exercise context, passing the per-comment transcript so the reviewer answers in
+  // context. CRUCIAL: the `solution` context is THAT revision's snapshot (the code
+  // that was reviewed), not the live editor code, so the thread stays coherent with
+  // what the comment is anchored to. Returns the assistant's free-text reply; throws
+  // on failure so the modal can show an inline error without losing typed text.
   const replyToPrComment = async (
+    scope: QualityScoreScope,
     targetLevel: number,
+    revisionIndex: number,
     messages: ChatMessage[]
   ): Promise<string> => {
+    const reviewKey = `${scoreBaseKey}/${scope}`;
+    const revision = getPrRevisions(reviewKey)[revisionIndex];
+    // Fall back to live code only if the revision (or its snapshot) is unavailable
+    // — e.g. a migrated legacy review with no stored snapshot.
+    const reviewedSolution =
+      revision && revision.snapshotAvailable ? revision.solutionSnapshot : code;
     const res = await fetch("/api/review", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -872,7 +888,7 @@ export function Workspace({
         exerciseId: exercise.id,
         level: targetLevel,
         language,
-        solution: code,
+        solution: reviewedSolution,
         readme: files.readme,
         perfSpec: files.perfCode,
         messages,
@@ -883,23 +899,19 @@ export function Workspace({
     return String(data.output || "(no reply)");
   };
 
-  // Persist a comment's reply thread into the scope's cached PR review so reopening
-  // the modal restores the conversation. Mutates only the matching comment (by index)
-  // and keeps the in-memory prReviews state in sync.
+  // Persist a comment's reply thread into a specific (revisionIndex, commentIndex)
+  // of the scope's cached history so reopening the modal restores the conversation.
+  // Mutates only the matching comment and keeps the in-memory prReviews state in sync.
   const persistPrCommentReplies = (
     scope: QualityScoreScope,
+    revisionIndex: number,
     commentIndex: number,
     replies: ChatMessage[]
   ) => {
     const reviewKey = `${scoreBaseKey}/${scope}`;
-    const current = getPrReview(reviewKey);
-    if (!current) return;
-    const nextComments = current.comments.map((c, i) =>
-      i === commentIndex ? { ...c, replies } : c
-    );
-    const next: PrReview = { ...current, comments: nextComments };
-    savePrReview(reviewKey, next);
-    setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "done", review: next } }));
+    const nextHistory = updatePrRevisionReplies(reviewKey, revisionIndex, commentIndex, replies);
+    if (!nextHistory) return;
+    setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "done", revisions: nextHistory } }));
   };
 
   // ── reusable panel bodies ──
@@ -1384,13 +1396,12 @@ export function Workspace({
         <PrReviewModal
           state={prReviewForScope(prReviewScope)}
           fileName={currentSolutionPath.slice(1)}
-          solutionCode={code}
           onAddActionItem={(text) => addPrCommentToActionItems(prReviewScope, text)}
-          onReplyToComment={(_commentIndex, messages) =>
-            replyToPrComment(prReviewLevel, messages)
+          onReplyToComment={(revisionIndex, _commentIndex, messages) =>
+            replyToPrComment(prReviewScope, prReviewLevel, revisionIndex, messages)
           }
-          onPersistReplies={(commentIndex, replies) =>
-            persistPrCommentReplies(prReviewScope, commentIndex, replies)
+          onPersistReplies={(revisionIndex, commentIndex, replies) =>
+            persistPrCommentReplies(prReviewScope, revisionIndex, commentIndex, replies)
           }
           onClose={() => setPrReviewScope(null)}
         />
