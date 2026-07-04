@@ -71,6 +71,24 @@ export type PrReview = {
   solutionHash?: string;
 };
 
+// One entry in a scope's PR-review history. Each time the learner requests a
+// review after changing their code, a new revision is APPENDED — earlier
+// revisions (and their comment reply threads) are never overwritten. Comments are
+// line-anchored to `solutionSnapshot`, so every revision carries the EXACT code it
+// reviewed and renders that, not the live editor code.
+export type PrRevision = {
+  createdAt: number;
+  solutionHash: string;
+  // The exact code text that was reviewed. REQUIRED for anchoring comments; a
+  // migrated legacy review may lack it (snapshotAvailable=false), in which case
+  // the modal notes "snapshot unavailable" and still shows the comments.
+  solutionSnapshot: string;
+  snapshotAvailable: boolean;
+  verdict: "approve" | "comment" | "changes";
+  summary: string;
+  comments: PrReviewComment[];
+};
+
 // Small, fast, dependency-free string hash (djb2) for change-detection only.
 export function hashSolution(code: string): string {
   let h = 5381;
@@ -244,40 +262,112 @@ export function allCodeQualityScores(): Record<string, CodeQualityScore> {
   return scores;
 }
 
-export function getPrReview(key: string): PrReview | null {
+// Parse an array of PR-review comments (shared by the revision and legacy readers).
+function parsePrComments(value: unknown): PrReviewComment[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (c: unknown): c is PrReviewComment =>
+        typeof c === "object" && c !== null && typeof (c as PrReviewComment).body === "string"
+    )
+    .map((c: PrReviewComment) => ({
+      line: Math.max(1, Math.round(Number(c.line)) || 1),
+      severity: c.severity === "praise" || c.severity === "nit" ? c.severity : "suggestion",
+      body: c.body,
+      suggestion:
+        typeof c.suggestion === "string" && c.suggestion.trim() ? c.suggestion : undefined,
+      replies: parseChatMessages((c as PrReviewComment).replies),
+    }));
+}
+
+function parseVerdict(value: unknown): PrReview["verdict"] {
+  return value === "approve" || value === "changes" ? value : "comment";
+}
+
+function parsePrRevision(value: unknown): PrRevision | null {
+  if (!value || typeof value !== "object") return null;
+  const parsed = value as Record<string, unknown>;
+  if (!Array.isArray(parsed.comments) || typeof parsed.summary !== "string") return null;
+  const hasSnapshot = typeof parsed.solutionSnapshot === "string";
+  return {
+    createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
+    solutionHash: typeof parsed.solutionHash === "string" ? parsed.solutionHash : "",
+    solutionSnapshot: hasSnapshot ? (parsed.solutionSnapshot as string) : "",
+    // Explicit false wins; otherwise infer from whether a snapshot string exists.
+    snapshotAvailable: parsed.snapshotAvailable === false ? false : hasSnapshot,
+    verdict: parseVerdict(parsed.verdict),
+    summary: parsed.summary,
+    comments: parsePrComments(parsed.comments),
+  };
+}
+
+// Read the revision history for a scope, migrating a legacy single-`PrReview`
+// cache into a one-element array. The migrated revision is best-effort: the old
+// shape never stored a snapshot, so it's marked snapshotAvailable=false and the
+// modal notes that while still rendering its comments and reply threads. Existing
+// cached reviews and their reply threads are never dropped.
+export function getPrRevisions(key: string): PrRevision[] {
   try {
     const value = localStorage.getItem(PR_REVIEW_PREFIX + key);
-    if (!value) return null;
+    if (!value) return [];
     const parsed = JSON.parse(value);
-    if (!Array.isArray(parsed?.comments) || typeof parsed?.summary !== "string") return null;
 
-    return {
-      verdict:
-        parsed.verdict === "approve" || parsed.verdict === "changes" ? parsed.verdict : "comment",
-      summary: parsed.summary,
-      comments: parsed.comments
-        .filter(
-          (c: unknown): c is PrReviewComment =>
-            typeof c === "object" && c !== null && typeof (c as PrReviewComment).body === "string"
-        )
-        .map((c: PrReviewComment) => ({
-          line: Math.max(1, Math.round(Number(c.line)) || 1),
-          severity: c.severity === "praise" || c.severity === "nit" ? c.severity : "suggestion",
-          body: c.body,
-          suggestion:
-            typeof c.suggestion === "string" && c.suggestion.trim() ? c.suggestion : undefined,
-          replies: parseChatMessages((c as PrReviewComment).replies),
-        })),
-      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
-      solutionHash: typeof parsed.solutionHash === "string" ? parsed.solutionHash : undefined,
-    };
+    // Current shape: { revisions: [...] }.
+    if (parsed && typeof parsed === "object" && Array.isArray(parsed.revisions)) {
+      return parsed.revisions
+        .map((r: unknown) => parsePrRevision(r))
+        .filter((r: PrRevision | null): r is PrRevision => r !== null);
+    }
+
+    // Legacy shape: a single PrReview object (has `comments` + `summary`, no
+    // `revisions`). Wrap it as a one-element history without a snapshot.
+    if (parsed && typeof parsed === "object" && Array.isArray(parsed.comments)) {
+      const legacy = parsePrRevision({ ...parsed, snapshotAvailable: false });
+      return legacy ? [legacy] : [];
+    }
+
+    return [];
   } catch {
-    return null;
+    return [];
   }
 }
 
-export function savePrReview(key: string, review: PrReview) {
-  localStorage.setItem(PR_REVIEW_PREFIX + key, JSON.stringify(review));
+function savePrRevisions(key: string, revisions: PrRevision[]) {
+  localStorage.setItem(PR_REVIEW_PREFIX + key, JSON.stringify({ revisions }));
+}
+
+// Append a new revision (oldest → newest order) and persist the whole history.
+// Returns the updated array so callers can sync in-memory state.
+export function appendPrRevision(key: string, revision: PrRevision): PrRevision[] {
+  const next = [...getPrRevisions(key), revision];
+  savePrRevisions(key, next);
+  return next;
+}
+
+// Replace the reply thread on one comment within one revision, targeting it by
+// (revisionIndex, commentIndex). Returns the updated history, or null if the
+// indices don't resolve to an existing comment.
+export function updatePrRevisionReplies(
+  key: string,
+  revisionIndex: number,
+  commentIndex: number,
+  replies: ChatMessage[]
+): PrRevision[] | null {
+  const revisions = getPrRevisions(key);
+  const revision = revisions[revisionIndex];
+  if (!revision || !revision.comments[commentIndex]) return null;
+  const nextRevisions = revisions.map((rev, ri) =>
+    ri === revisionIndex
+      ? {
+          ...rev,
+          comments: rev.comments.map((c, ci) =>
+            ci === commentIndex ? { ...c, replies } : c
+          ),
+        }
+      : rev
+  );
+  savePrRevisions(key, nextRevisions);
+  return nextRevisions;
 }
 
 export function clearPrReview(key: string) {

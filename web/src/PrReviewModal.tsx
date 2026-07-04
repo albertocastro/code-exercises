@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChatMessage, PrReview, PrReviewComment, PrReviewTheme } from "./insightsChat";
+import type { ChatMessage, PrReview, PrReviewComment, PrRevision, PrReviewTheme } from "./insightsChat";
 import { getPrReviewTheme, savePrReviewTheme } from "./insightsChat";
 
 export type PrReviewState =
   | { status: "idle" | "loading" }
-  | { status: "done"; review: PrReview }
+  // `revisions` is the full history (oldest → newest); the modal defaults to the
+  // latest and lets the learner toggle back to earlier revisions.
+  | { status: "done"; revisions: PrRevision[] }
   | { status: "error"; error: string };
 
 // One highlighted line = a list of {content, color} spans. Plain-text fallback is
@@ -79,14 +81,24 @@ function buildTranscript(comment: PrReviewComment, draft: string): ChatMessage[]
 
 function ReplyThread({
   comment,
+  revisionIndex,
   commentIndex,
   onReplyToComment,
   onPersistReplies,
 }: {
   comment: PrReviewComment;
+  revisionIndex: number;
   commentIndex: number;
-  onReplyToComment: (commentIndex: number, messages: ChatMessage[]) => Promise<string>;
-  onPersistReplies: (commentIndex: number, replies: ChatMessage[]) => void;
+  onReplyToComment: (
+    revisionIndex: number,
+    commentIndex: number,
+    messages: ChatMessage[]
+  ) => Promise<string>;
+  onPersistReplies: (
+    revisionIndex: number,
+    commentIndex: number,
+    replies: ChatMessage[]
+  ) => void;
 }) {
   const replies = comment.replies ?? [];
   const [open, setOpen] = useState(replies.length > 0);
@@ -108,15 +120,15 @@ function ReplyThread({
     const transcript = buildTranscript(comment, trimmed);
     const userTurn: ChatMessage = { role: "user", content: trimmed };
     const withUser = [...replies, userTurn];
-    onPersistReplies(commentIndex, withUser);
+    onPersistReplies(revisionIndex, commentIndex, withUser);
     setPending(true);
     try {
-      const answer = await onReplyToComment(commentIndex, transcript);
-      onPersistReplies(commentIndex, [...withUser, { role: "assistant", content: answer }]);
+      const answer = await onReplyToComment(revisionIndex, commentIndex, transcript);
+      onPersistReplies(revisionIndex, commentIndex, [...withUser, { role: "assistant", content: answer }]);
       setDraft("");
     } catch (e) {
       // Roll back the optimistic user turn but keep the typed text so they can retry.
-      onPersistReplies(commentIndex, replies);
+      onPersistReplies(revisionIndex, commentIndex, replies);
       setDraft(trimmed);
       setError(e instanceof Error ? e.message : "Reply failed. Try again.");
     } finally {
@@ -200,6 +212,7 @@ function ReplyThread({
 
 function CommentThread({
   comment,
+  revisionIndex,
   commentIndex,
   onAddActionItem,
   onReplyToComment,
@@ -207,10 +220,19 @@ function CommentThread({
   added,
 }: {
   comment: PrReviewComment;
+  revisionIndex: number;
   commentIndex: number;
   onAddActionItem: (text: string) => void;
-  onReplyToComment: (commentIndex: number, messages: ChatMessage[]) => Promise<string>;
-  onPersistReplies: (commentIndex: number, replies: ChatMessage[]) => void;
+  onReplyToComment: (
+    revisionIndex: number,
+    commentIndex: number,
+    messages: ChatMessage[]
+  ) => Promise<string>;
+  onPersistReplies: (
+    revisionIndex: number,
+    commentIndex: number,
+    replies: ChatMessage[]
+  ) => void;
   added: boolean;
 }) {
   return (
@@ -239,6 +261,7 @@ function CommentThread({
       </div>
       <ReplyThread
         comment={comment}
+        revisionIndex={revisionIndex}
         commentIndex={commentIndex}
         onReplyToComment={onReplyToComment}
         onPersistReplies={onPersistReplies}
@@ -257,10 +280,17 @@ function initialTheme(): PrReviewTheme {
   return "dark";
 }
 
+function fmtRevisionTime(ts: number): string {
+  try {
+    return new Date(ts).toLocaleString();
+  } catch {
+    return "";
+  }
+}
+
 export function PrReviewModal({
   state,
   fileName,
-  solutionCode,
   onAddActionItem,
   onReplyToComment,
   onPersistReplies,
@@ -268,15 +298,34 @@ export function PrReviewModal({
 }: {
   state: PrReviewState;
   fileName: string;
-  solutionCode: string;
   onAddActionItem: (text: string) => void;
-  onReplyToComment: (commentIndex: number, messages: ChatMessage[]) => Promise<string>;
-  onPersistReplies: (commentIndex: number, replies: ChatMessage[]) => void;
+  onReplyToComment: (
+    revisionIndex: number,
+    commentIndex: number,
+    messages: ChatMessage[]
+  ) => Promise<string>;
+  onPersistReplies: (
+    revisionIndex: number,
+    commentIndex: number,
+    replies: ChatMessage[]
+  ) => void;
   onClose: () => void;
 }) {
   const [hl, setHl] = useState<HlByTheme>({ dark: [], light: [] });
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [theme, setTheme] = useState<PrReviewTheme>(initialTheme);
+
+  const revisions = state.status === "done" ? state.revisions : [];
+  const revisionCount = revisions.length;
+  // Which revision is on screen. Default to the LATEST; clamp when the history
+  // changes (e.g. a new revision appended while the modal is open).
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  useEffect(() => {
+    if (revisionCount > 0) setSelectedIndex(revisionCount - 1);
+  }, [revisionCount]);
+  const clampedIndex = revisionCount > 0 ? Math.min(selectedIndex, revisionCount - 1) : 0;
+  const revision = revisions[clampedIndex];
+  const isLatest = revisionCount > 0 && clampedIndex === revisionCount - 1;
 
   const toggleTheme = () => {
     setTheme((prev) => {
@@ -295,43 +344,49 @@ export function PrReviewModal({
   }, [onClose]);
 
   const lang = langForFile(fileName);
+  // Highlight the SELECTED revision's own snapshot (comments are anchored to it),
+  // not the live editor code. Re-runs whenever the selected revision changes.
+  const snapshot = revision?.solutionSnapshot ?? "";
   useEffect(() => {
     let cancelled = false;
     // Seed a plain-text render immediately so the code shows before Shiki resolves.
-    const fallback = plainLines(solutionCode);
+    const fallback = plainLines(snapshot);
     setHl({ dark: fallback, light: fallback });
-    void highlightLines(solutionCode, lang).then((next) => {
+    void highlightLines(snapshot, lang).then((next) => {
       if (!cancelled) setHl(next);
     });
     return () => {
       cancelled = true;
     };
-  }, [solutionCode, lang]);
+  }, [snapshot, lang]);
 
   const lines = theme === "light" ? hl.light : hl.dark;
 
-  // Group comments by the line they anchor to, so each line can render its threads
-  // directly after it (a line may legitimately carry more than one comment). We keep
-  // each comment's stable index so reply persistence targets the right record.
+  // Group the selected revision's comments by the line they anchor to, so each line
+  // renders its threads directly after it (a line may carry more than one comment).
+  // We keep each comment's stable index so reply persistence targets the right record.
   const commentsByLine = useMemo(() => {
     const map = new Map<number, Array<{ comment: PrReviewComment; index: number }>>();
-    if (state.status !== "done") return map;
+    if (!revision) return map;
     const max = Math.max(1, lines.length);
-    state.review.comments.forEach((c, index) => {
+    revision.comments.forEach((c, index) => {
       const line = Math.min(Math.max(1, c.line), max);
       const list = map.get(line) ?? [];
       list.push({ comment: c, index });
       map.set(line, list);
     });
     return map;
-  }, [state, lines.length]);
+  }, [revision, lines.length]);
 
   const handleAdd = (text: string) => {
     onAddActionItem(text);
     setAdded((prev) => new Set(prev).add(text));
   };
 
-  const verdict = state.status === "done" ? verdictMeta[state.review.verdict] : null;
+  const verdict = revision ? verdictMeta[revision.verdict] : null;
+  // A migrated legacy review has no stored snapshot; render its comments as a flat
+  // list (no line-anchored code) and note that the snapshot is unavailable.
+  const snapshotMissing = !!revision && !revision.snapshotAvailable;
 
   return (
     <div className="pr-backdrop" onClick={onClose}>
@@ -346,10 +401,36 @@ export function PrReviewModal({
             {verdict && <span className={`pr-verdict ${verdict.tone}`}>{verdict.label}</span>}
             <div className="pr-header-text">
               <strong className="pr-file">{fileName}</strong>
-              {state.status === "done" && <p className="pr-summary">{state.review.summary}</p>}
+              {revision && <p className="pr-summary">{revision.summary}</p>}
             </div>
           </div>
           <div className="pr-header-controls">
+            {revisionCount > 1 && (
+              <div className="pr-rev-switch" role="group" aria-label="Review revision">
+                <button
+                  className="pr-rev-btn"
+                  aria-label="Previous revision"
+                  title="Previous revision"
+                  disabled={clampedIndex === 0}
+                  onClick={() => setSelectedIndex(Math.max(0, clampedIndex - 1))}
+                >
+                  ‹
+                </button>
+                <span className="pr-rev-label" title={fmtRevisionTime(revision?.createdAt ?? 0)}>
+                  Revision {clampedIndex + 1} of {revisionCount}
+                  {isLatest && <span className="pr-rev-latest">latest</span>}
+                </span>
+                <button
+                  className="pr-rev-btn"
+                  aria-label="Next revision"
+                  title="Next revision"
+                  disabled={clampedIndex >= revisionCount - 1}
+                  onClick={() => setSelectedIndex(Math.min(revisionCount - 1, clampedIndex + 1))}
+                >
+                  ›
+                </button>
+              </div>
+            )}
             <button
               className="pr-theme-toggle"
               aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
@@ -364,6 +445,22 @@ export function PrReviewModal({
           </div>
         </div>
 
+        {revision && (
+          <div className="pr-rev-meta">
+            {revisionCount > 1 ? (
+              <span>
+                Revision {clampedIndex + 1} of {revisionCount}
+                {isLatest ? " (latest)" : ""} · {fmtRevisionTime(revision.createdAt)}
+              </span>
+            ) : (
+              <span>Reviewed {fmtRevisionTime(revision.createdAt)}</span>
+            )}
+            {snapshotMissing && (
+              <span className="pr-rev-warn"> · snapshot unavailable for this revision</span>
+            )}
+          </div>
+        )}
+
         <div className="pr-body">
           {state.status === "loading" || state.status === "idle" ? (
             <div className="pr-loading" aria-live="polite">
@@ -374,6 +471,26 @@ export function PrReviewModal({
             <div className="pr-error" role="alert">
               <strong>Review unavailable</strong>
               <p>{state.error}</p>
+            </div>
+          ) : snapshotMissing ? (
+            // No snapshot to anchor to (migrated legacy review): flat comment list.
+            <div className="pr-comment-list">
+              {revision!.comments.length === 0 ? (
+                <p className="pr-empty">No inline comments on this revision.</p>
+              ) : (
+                revision!.comments.map((comment, index) => (
+                  <CommentThread
+                    key={index}
+                    comment={comment}
+                    revisionIndex={clampedIndex}
+                    commentIndex={index}
+                    onAddActionItem={handleAdd}
+                    onReplyToComment={onReplyToComment}
+                    onPersistReplies={onPersistReplies}
+                    added={added.has(comment.body)}
+                  />
+                ))
+              )}
             </div>
           ) : (
             <div className="pr-code">
@@ -400,6 +517,7 @@ export function PrReviewModal({
                       <CommentThread
                         key={index}
                         comment={comment}
+                        revisionIndex={clampedIndex}
                         commentIndex={index}
                         onAddActionItem={handleAdd}
                         onReplyToComment={onReplyToComment}
