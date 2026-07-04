@@ -2,8 +2,10 @@ const CHAT_PREFIX = "code-exercises-insights-chat:";
 const QUALITY_PREFIX = "code-exercises-quality-score:";
 const PR_REVIEW_PREFIX = "code-exercises-pr-review:";
 const LAYOUT_KEY = "code-exercises-insights-layout";
+const PR_REVIEW_THEME_KEY = "code-exercises-pr-review-theme";
 
 export type InsightsLayout = "sidebar" | "center";
+export type PrReviewTheme = "light" | "dark";
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type ActionItem = {
   text: string;
@@ -55,6 +57,9 @@ export type PrReviewComment = {
   severity: "praise" | "nit" | "suggestion";
   body: string;
   suggestion?: string;
+  // Per-comment reply thread (chat with the reviewer about this specific comment).
+  // The original AI comment is NOT stored here; it seeds the transcript at send time.
+  replies?: ChatMessage[];
 };
 export type PrReview = {
   verdict: "approve" | "comment" | "changes";
@@ -73,6 +78,14 @@ export function hashSolution(code: string): string {
     h = ((h << 5) + h + code.charCodeAt(i)) | 0;
   }
   return (h >>> 0).toString(36);
+}
+
+function parseChatMessages(value: unknown): ChatMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (m): m is ChatMessage =>
+      (m?.role === "user" || m?.role === "assistant") && typeof m.content === "string"
+  );
 }
 
 function parseStudyPlan(value: unknown): StudyTopic[] {
@@ -253,6 +266,7 @@ export function getPrReview(key: string): PrReview | null {
           body: c.body,
           suggestion:
             typeof c.suggestion === "string" && c.suggestion.trim() ? c.suggestion : undefined,
+          replies: parseChatMessages((c as PrReviewComment).replies),
         })),
       createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
       solutionHash: typeof parsed.solutionHash === "string" ? parsed.solutionHash : undefined,
@@ -293,4 +307,16 @@ export function getInsightsLayout(): InsightsLayout {
 
 export function saveInsightsLayout(layout: InsightsLayout) {
   localStorage.setItem(LAYOUT_KEY, layout);
+}
+
+// Persisted light/dark preference for the PR-review modal. Defaults to "dark"
+// (matches the app) when nothing is stored. A persisted choice always wins; the
+// modal may seed from prefers-color-scheme only when this returns null.
+export function getPrReviewTheme(): PrReviewTheme | null {
+  const value = localStorage.getItem(PR_REVIEW_THEME_KEY);
+  return value === "light" || value === "dark" ? value : null;
+}
+
+export function savePrReviewTheme(theme: PrReviewTheme) {
+  localStorage.setItem(PR_REVIEW_THEME_KEY, theme);
 }
