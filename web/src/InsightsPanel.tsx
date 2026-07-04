@@ -347,6 +347,7 @@ export function InsightsPanel({
   storageKey,
   showAiReview,
   onToggleClaim,
+  onOpenPrReview,
   onNext,
   onClose,
 }: {
@@ -362,6 +363,7 @@ export function InsightsPanel({
   storageKey: string;
   showAiReview: boolean;
   onToggleClaim?: (text: string) => void;
+  onOpenPrReview?: () => void;
   onNext: () => void;
   onClose: () => void;
 }) {
@@ -486,6 +488,18 @@ export function InsightsPanel({
         {showAiReview && (
           <>
             <QualityScoreCard state={qualityScore} categoryId={categoryId} onToggleClaim={onToggleClaim} />
+
+            {onOpenPrReview && (
+              <div className="insights-pr-review">
+                <div className="insights-pr-review-copy">
+                  <strong>AI review</strong>
+                  <p>See a pull-request-style review with inline comments on your code.</p>
+                </div>
+                <button className="run-btn" onClick={onOpenPrReview}>
+                  AI review
+                </button>
+              </div>
+            )}
 
             <div className="insights-ai">
               <div className="insights-ai-head">

@@ -34,15 +34,21 @@ import { runExercise, type RunResult } from "./runner/testRunner";
 import type { ConsoleEntry, ConsoleSink } from "./runner/consoleCapture";
 import { formatCode } from "./formatCode";
 import {
+  addActionItemToScore,
   clearCodeQualityScore,
+  clearPrReview,
   getCodeQualityScore,
+  getPrReview,
   hashSolution,
+  savePrReview,
   saveCodeQualityScore,
   type ActionItem,
   type CodeQualityScore,
+  type PrReview,
   type ScoreAnalysis,
   type StudyTopic,
 } from "./insightsChat";
+import { PrReviewModal, type PrReviewState } from "./PrReviewModal";
 
 type Layout = "split" | "columns";
 type DiagnosticsTab = "preview" | "tests" | "console";
@@ -143,6 +149,9 @@ export function Workspace({
   const [hint, setHint] = useState<ComplexityResult | null>(null);
   const [insightsLevel, setInsightsLevel] = useState<number | null>(null);
   const [qualityScores, setQualityScores] = useState<Record<string, QualityScoreState>>({});
+  const [prReviews, setPrReviews] = useState<Record<string, PrReviewState>>({});
+  // Which scope's PR-review modal is open (null = closed).
+  const [prReviewScope, setPrReviewScope] = useState<QualityScoreScope | null>(null);
   const [historyFile, setHistoryFile] = useState<DraftFile | null>(null);
   const [layout, setLayout] = useState<Layout>(
     () => (localStorage.getItem(LAYOUT_KEY) as Layout) || "split"
@@ -644,6 +653,98 @@ export function Workspace({
     return cached ? { status: "done", score: cached } : { status: "idle" };
   };
 
+  const prReviewForScope = (scope: QualityScoreScope): PrReviewState => {
+    const reviewKey = `${scoreBaseKey}/${scope}`;
+    const current = prReviews[reviewKey];
+    if (current) return current;
+
+    const cached = getPrReview(reviewKey);
+    return cached ? { status: "done", review: cached } : { status: "idle" };
+  };
+
+  // On-demand PR-style review. Mirrors ensureQualityScore: cache by solutionHash so
+  // re-opening the modal on unchanged code skips the agent round-trip.
+  const ensurePrReview = async (
+    targetLevel: number,
+    options: { scope: QualityScoreScope }
+  ) => {
+    const reviewKey = `${scoreBaseKey}/${options.scope}`;
+    const previous = getPrReview(reviewKey);
+    const solutionHash = hashSolution(code);
+    if (previous && previous.solutionHash === solutionHash) {
+      setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "done", review: previous } }));
+      return;
+    }
+
+    if (prReviews[reviewKey]?.status === "loading") return;
+
+    clearPrReview(reviewKey);
+    setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "loading" } }));
+    try {
+      const res = await fetch("/api/pr-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          categoryId,
+          exerciseId: exercise.id,
+          level: targetLevel,
+          language,
+          solution: code,
+          readme: files.readme,
+          perfSpec: files.perfCode,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Review failed");
+
+      const parsed = JSON.parse(data.output);
+      const review: PrReview = {
+        verdict:
+          parsed.verdict === "approve" || parsed.verdict === "changes" ? parsed.verdict : "comment",
+        summary: String(parsed.summary || "Review is ready."),
+        comments: Array.isArray(parsed.comments)
+          ? parsed.comments
+              .filter(
+                (c: unknown): c is PrReview["comments"][number] =>
+                  typeof c === "object" && c !== null && typeof (c as { body?: unknown }).body === "string"
+              )
+              .map((c) => ({
+                line: Math.max(1, Math.round(Number(c.line)) || 1),
+                severity:
+                  c.severity === "praise" || c.severity === "nit" ? c.severity : "suggestion",
+                body: String(c.body),
+                suggestion:
+                  typeof c.suggestion === "string" && c.suggestion.trim() ? c.suggestion : undefined,
+              }))
+          : [],
+        createdAt: Date.now(),
+        solutionHash,
+      };
+
+      savePrReview(reviewKey, review);
+      setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "done", review } }));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setPrReviews((prev) => ({ ...prev, [reviewKey]: { status: "error", error: message } }));
+    }
+  };
+
+  const openPrReview = (scope: QualityScoreScope, targetLevel: number) => {
+    setPrReviewScope(scope);
+    void ensurePrReview(targetLevel, { scope });
+  };
+
+  // "Add to action items" from a PR comment: append it to the scope's saved score
+  // (deduped) so it joins the retake checklist. Falls back to per-level scope when
+  // the exercise-level score isn't populated yet.
+  const addPrCommentToActionItems = (scope: QualityScoreScope, text: string) => {
+    const scoreKey = `${scoreBaseKey}/${scope}`;
+    const next = addActionItemToScore(scoreKey, text);
+    if (next) {
+      setQualityScores((prev) => ({ ...prev, [scoreKey]: { status: "done", score: next } }));
+    }
+  };
+
   // ── reusable panel bodies ──
   // Surface the saved retake goals + study plan below the spec, so they stay visible
   // while you redo the exercise with the completion modal closed.
@@ -1085,6 +1186,7 @@ export function Workspace({
           storageKey={`${scoreBaseKey}/${insightsScope}`}
           showAiReview={insightsSubmitted}
           onToggleClaim={(text) => toggleActionItemClaim(insightsScope, text)}
+          onOpenPrReview={() => openPrReview(insightsScope, insightsLevel)}
           onNext={() => {
             const next = insightsLevel + 1;
             setInsightsLevel(null);
@@ -1102,6 +1204,15 @@ export function Workspace({
           onFile={setHistoryFile}
           onRestore={restoreSnapshot}
           onClose={() => setHistoryFile(null)}
+        />
+      )}
+      {prReviewScope !== null && (
+        <PrReviewModal
+          state={prReviewForScope(prReviewScope)}
+          fileName={currentSolutionPath.slice(1)}
+          solutionCode={code}
+          onAddActionItem={(text) => addPrCommentToActionItems(prReviewScope, text)}
+          onClose={() => setPrReviewScope(null)}
         />
       )}
     </div>

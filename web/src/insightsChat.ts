@@ -1,5 +1,6 @@
 const CHAT_PREFIX = "code-exercises-insights-chat:";
 const QUALITY_PREFIX = "code-exercises-quality-score:";
+const PR_REVIEW_PREFIX = "code-exercises-pr-review:";
 const LAYOUT_KEY = "code-exercises-insights-layout";
 
 export type InsightsLayout = "sidebar" | "center";
@@ -44,6 +45,24 @@ export type CodeQualityScore = {
   createdAt: number;
   // Hash of the solution the score was generated from. Lets a resubmit skip the
   // agent call (and re-use this score) when the code hasn't changed.
+  solutionHash?: string;
+};
+
+// GitHub-PR-style on-demand review of the learner's solution file. Comments are
+// anchored to 1-based line numbers in the submitted solution and rendered inline.
+export type PrReviewComment = {
+  line: number;
+  severity: "praise" | "nit" | "suggestion";
+  body: string;
+  suggestion?: string;
+};
+export type PrReview = {
+  verdict: "approve" | "comment" | "changes";
+  summary: string;
+  comments: PrReviewComment[];
+  createdAt: number;
+  // Hash of the solution the review was generated from, so re-opening unchanged
+  // code reuses the cached review instead of re-calling the agent.
   solutionHash?: string;
 };
 
@@ -210,6 +229,62 @@ export function allCodeQualityScores(): Record<string, CodeQualityScore> {
   }
 
   return scores;
+}
+
+export function getPrReview(key: string): PrReview | null {
+  try {
+    const value = localStorage.getItem(PR_REVIEW_PREFIX + key);
+    if (!value) return null;
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed?.comments) || typeof parsed?.summary !== "string") return null;
+
+    return {
+      verdict:
+        parsed.verdict === "approve" || parsed.verdict === "changes" ? parsed.verdict : "comment",
+      summary: parsed.summary,
+      comments: parsed.comments
+        .filter(
+          (c: unknown): c is PrReviewComment =>
+            typeof c === "object" && c !== null && typeof (c as PrReviewComment).body === "string"
+        )
+        .map((c: PrReviewComment) => ({
+          line: Math.max(1, Math.round(Number(c.line)) || 1),
+          severity: c.severity === "praise" || c.severity === "nit" ? c.severity : "suggestion",
+          body: c.body,
+          suggestion:
+            typeof c.suggestion === "string" && c.suggestion.trim() ? c.suggestion : undefined,
+        })),
+      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
+      solutionHash: typeof parsed.solutionHash === "string" ? parsed.solutionHash : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function savePrReview(key: string, review: PrReview) {
+  localStorage.setItem(PR_REVIEW_PREFIX + key, JSON.stringify(review));
+}
+
+export function clearPrReview(key: string) {
+  localStorage.removeItem(PR_REVIEW_PREFIX + key);
+}
+
+// Append a PR-review comment as a retake action item on the scope's saved score,
+// deduping by text, so PR feedback and the retake checklist stay unified. Returns
+// the updated score (or null if there's no saved score to attach to yet).
+export function addActionItemToScore(key: string, text: string): CodeQualityScore | null {
+  const current = getCodeQualityScore(key);
+  if (!current) return null;
+  const trimmed = text.trim();
+  if (!trimmed || current.actionItems.some((item) => item.text === trimmed)) return current;
+
+  const next: CodeQualityScore = {
+    ...current,
+    actionItems: [...current.actionItems, { text: trimmed, status: "open" }],
+  };
+  saveCodeQualityScore(key, next);
+  return next;
 }
 
 export function getInsightsLayout(): InsightsLayout {
