@@ -1,102 +1,70 @@
 #!/usr/bin/env node
 
+// Java runtime helper — IN-PROCESS (no Docker).
+//
+// Java exercises are compiled and executed locally with the JDK's `javac`/`java`
+// binaries baked into the app image. There is NO sibling Docker container and NO
+// host Docker socket — the previous docker-out-of-docker design (which required
+// mounting /var/run/docker.sock and running the app as root) has been removed
+// for security. See web-api/handlers.mjs and docs/docker.md.
+//
+// Commands:
+//   node scripts/runtime.mjs install [all|java]   verify the JDK is available
+//   node scripts/runtime.mjs up [all|java]         (alias of install; no daemon)
+//   node scripts/runtime.mjs java-test <exercise_id> <level>
+
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-const RUNTIMES = {
-  java: {
-    image: "code-exercises-java:latest",
-    container: "code-exercises-java-runtime",
-    dockerfileDir: path.join(root, "runtimes", "java"),
-  },
-};
+const JAVA_HOME = process.env.JAVA_HOME || "";
+const JAVA_MAX_HEAP = process.env.JAVA_MAX_HEAP || "256m";
 
-function docker(args, options = {}) {
-  return spawnSync("docker", args, {
-    cwd: root,
-    encoding: "utf8",
-    stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
-  });
+function javaBin(name) {
+  return JAVA_HOME ? path.join(JAVA_HOME, "bin", name) : name;
 }
 
-function assertDocker() {
-  const version = docker(["--version"], { capture: true });
-  if (version.status !== 0) {
-    throw new Error("Docker is not installed or is not on PATH.");
-  }
+function javaHardeningFlags() {
+  return [
+    `-Xmx${JAVA_MAX_HEAP}`,
+    "-XX:+UseSerialGC",
+    "-Djava.awt.headless=true",
+    "-Duser.language=en",
+    "-Duser.country=US",
+    "-Duser.timezone=UTC",
+  ];
+}
 
-  const info = docker(["info", "--format", "{{.ServerVersion}}"], { capture: true });
-  if (info.status !== 0) {
+// Verify the JDK toolchain is present and usable. This replaces the old
+// "build/create/start the sibling Docker container" logic.
+function assertJdk() {
+  const javac = spawnSync(javaBin("javac"), ["-version"], { encoding: "utf8" });
+  if (javac.error || javac.status !== 0) {
     throw new Error(
-      "Docker is installed, but the daemon is not running. Start Docker Desktop and rerun this command."
+      "JDK not found: `javac` is not available. Ensure a JDK is installed and JAVA_HOME is set " +
+        "(the app image bakes one in; locally, install a JDK 21)."
     );
   }
-}
-
-function runtimeFor(name) {
-  const runtime = RUNTIMES[name];
-  if (!runtime) {
-    throw new Error(`Unknown runtime "${name}". Known runtimes: ${Object.keys(RUNTIMES).join(", ")}`);
+  const java = spawnSync(javaBin("java"), ["-version"], { encoding: "utf8" });
+  if (java.error || java.status !== 0) {
+    throw new Error("JDK not found: `java` is not available on PATH / JAVA_HOME.");
   }
-  return runtime;
-}
-
-function imageExists(runtime) {
-  const result = docker(["image", "inspect", runtime.image], { capture: true });
-  return result.status === 0;
-}
-
-function containerExists(runtime) {
-  const result = docker(["container", "inspect", runtime.container], { capture: true });
-  return result.status === 0;
-}
-
-function containerRunning(runtime) {
-  const result = docker(
-    ["container", "inspect", "-f", "{{.State.Running}}", runtime.container],
-    { capture: true }
-  );
-  return result.status === 0 && result.stdout.trim() === "true";
 }
 
 function ensureRuntime(name) {
-  const runtime = runtimeFor(name);
-  assertDocker();
-
-  if (!imageExists(runtime)) {
-    console.log(`Building ${name} runtime image (${runtime.image})...`);
-    const build = docker(["build", "-t", runtime.image, runtime.dockerfileDir]);
-    if (build.status !== 0) throw new Error(`Could not build ${name} runtime image.`);
+  if (name !== "java" && name !== "all") {
+    throw new Error(`Unknown runtime "${name}". Known runtimes: java, all`);
   }
-
-  if (!containerExists(runtime)) {
-    console.log(`Creating ${name} runtime container (${runtime.container})...`);
-    const create = docker([
-      "create",
-      "--name",
-      runtime.container,
-      "--label",
-      "code-exercises-runtime=true",
-      runtime.image,
-    ]);
-    if (create.status !== 0) throw new Error(`Could not create ${name} runtime container.`);
-  }
-
-  if (!containerRunning(runtime)) {
-    console.log(`Starting ${name} runtime container (${runtime.container})...`);
-    const start = docker(["start", runtime.container]);
-    if (start.status !== 0) throw new Error(`Could not start ${name} runtime container.`);
-  }
+  assertJdk();
+  const version = spawnSync(javaBin("java"), ["-version"], { encoding: "utf8" });
+  const line = (version.stderr || version.stdout || "").split("\n")[0].trim();
+  console.log(`Java runtime ready (in-process): ${line}`);
 }
 
-function ensureAll() {
-  for (const name of Object.keys(RUNTIMES)) ensureRuntime(name);
-}
-
+// Compile and run a Java exercise's test class locally, in the exercise dir.
 function runJavaExercise(exerciseId, level) {
   const exerciseDir = path.join(root, exerciseId);
   const testFile = readdirSync(exerciseDir).find((file) => file.endsWith("Test.java"));
@@ -104,46 +72,44 @@ function runJavaExercise(exerciseId, level) {
     throw new Error(`${exerciseId} does not have a Java solution file.`);
   }
   const testClass = testFile.replace(/\.java$/, "");
-  ensureRuntime("java");
+  assertJdk();
 
-  const runtime = runtimeFor("java");
-  const runId = `exercise-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const containerDir = `/tmp/${runId}`;
-  const mkdir = docker(["exec", runtime.container, "mkdir", "-p", containerDir]);
-  if (mkdir.status !== 0) throw new Error("Could not prepare Java runtime directory.");
+  const javaFiles = readdirSync(exerciseDir).filter((f) => f.endsWith(".java"));
+  const compile = spawnSync(javaBin("javac"), ["-encoding", "UTF-8", ...javaFiles], {
+    cwd: exerciseDir,
+    stdio: "inherit",
+  });
+  if (compile.status !== 0) process.exit(compile.status ?? 1);
 
-  const copy = docker(["cp", `${exerciseDir}/.`, `${runtime.container}:${containerDir}`]);
-  if (copy.status !== 0) throw new Error("Could not copy Java exercise files into runtime container.");
-
-  try {
-    const run = docker([
-      "exec",
-      "-w",
-      containerDir,
-      runtime.container,
-      "bash",
-      "-lc",
-      `javac *.java && java ${testClass} ${Number(level) || 1}`,
-    ]);
-    if (run.status !== 0) process.exit(run.status ?? 1);
-  } finally {
-    docker(["exec", runtime.container, "rm", "-rf", containerDir], { capture: true });
-  }
+  const run = spawnSync(
+    javaBin("java"),
+    [...javaHardeningFlags(), testClass, String(Number(level) || 1)],
+    { cwd: exerciseDir, stdio: "inherit" }
+  );
+  if (run.status !== 0) process.exit(run.status ?? 1);
 }
 
 function usage() {
   console.log(`Usage:
-  node scripts/runtime.mjs install [all|java]
-  node scripts/runtime.mjs up [all|java]
+  node scripts/runtime.mjs install [all|java]   verify the JDK is available
+  node scripts/runtime.mjs up [all|java]         (alias of install; no daemon)
   node scripts/runtime.mjs java-test <exercise_id> <level>
 `);
 }
 
 try {
   const [command, target = "all", level] = process.argv.slice(2);
+  // The `postinstall` hook runs this with `install`. That must NOT hard-fail a
+  // plain `npm install` when there's no JDK yet (e.g. inside an image build, or
+  // a dev machine without a JDK) — Java exercises simply stay unavailable until
+  // a JDK is present. Honor SKIP_RUNTIME_INSTALL to skip entirely (the
+  // Dockerfile uses `npm ci --ignore-scripts` anyway).
+  if ((command === "install" || command === "up") && process.env.SKIP_RUNTIME_INSTALL) {
+    console.log("SKIP_RUNTIME_INSTALL set — skipping Java runtime check.");
+    process.exit(0);
+  }
   if (command === "install" || command === "up") {
-    if (target === "all") ensureAll();
-    else ensureRuntime(target);
+    ensureRuntime(target);
   } else if (command === "java-test") {
     runJavaExercise(target, level);
   } else {
@@ -151,6 +117,14 @@ try {
     process.exit(command ? 1 : 0);
   }
 } catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
+  const message = error instanceof Error ? error.message : String(error);
+  // Don't let a missing JDK during `npm install` (postinstall) break the whole
+  // install. Java exercises stay unavailable until a JDK is present; any other
+  // invocation still fails loudly.
+  if (process.env.npm_lifecycle_event === "postinstall") {
+    console.warn(`Skipping Java runtime check during install: ${message}`);
+    process.exit(0);
+  }
+  console.error(message);
   process.exit(1);
 }

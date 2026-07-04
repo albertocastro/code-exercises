@@ -1,0 +1,41 @@
+[Unit]
+Description=code-exercises (Node CLI/web IDE + codex CLI) via Docker Compose
+# code-exercises runs entirely inside Docker, so it needs the daemon up first.
+# This unit is independent of every next-role-* and learnos unit — enabling/
+# disabling it never touches them.
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/home/deploy/code-exercises
+
+# Foreground `up` (no -d): systemd tracks `docker compose up` as the main
+# process, journald captures the container's stdout/stderr live
+# (journalctl -u code-exercises -f), and Restart=always covers the whole
+# stack dying. Per-container crashes are handled independently by
+# `restart: unless-stopped` in docker-compose.yml, so the two restart
+# mechanisms don't fight — this one only fires if `up` itself exits.
+#
+# ExecStartPre tears down any stale stack from a previous run (the leading `-`
+# ignores its exit code when nothing is up). Both compose files are always
+# passed together so the prod host-path volume applies.
+ExecStartPre=-/usr/bin/docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml down --remove-orphans
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up
+ExecStop=/usr/bin/docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml down
+
+Restart=always
+RestartSec=10
+# Give in-flight codex child processes (the app shells out to `codex` for
+# /api/review and /api/score) time to exit cleanly when compose stops the
+# container.
+TimeoutStopSec=120
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

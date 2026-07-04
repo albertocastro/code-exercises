@@ -1,0 +1,29 @@
+# Production override for the shared box — layered ON TOP of the repo's
+# docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up
+#
+# The base compose is frozen; this file only *overrides* it. The one change vs.
+# local:
+#
+#  1. The codex CLI's home directory moves from a Docker *named* volume to an
+#     explicit *host* bind-mount under /var/lib/code-exercises, so auth (the
+#     one-time `codex login`) lands at a known path on the box (easy to inspect).
+#     Compose merges volume mounts by container-side target path, so this
+#     replaces the named-volume mount in the base file for the same target
+#     (/home/appuser/.codex, the non-root app user's home).
+#
+#  2. Nothing else. The port stays 3200; "tailnet-only" is enforced at the box's
+#     firewall / security group (no public inbound 3200), like next-role-2 and
+#     learnos — see docs/deploy.md.
+#
+# SECURITY: there is NO docker.sock mount to inherit or override — Java runs
+# in-process and the container runs as non-root uid/gid 1001 (see the base
+# compose + Dockerfile). The host dir below is created and chowned to 1001:1001
+# by deploy/install.sh before this ever mounts it, so the non-root user in the
+# container can read/write its codex auth.
+
+services:
+  code-exercises:
+    volumes:
+      - /var/lib/code-exercises/codex:/home/appuser/.codex
