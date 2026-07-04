@@ -99,4 +99,12 @@ jobs:
           docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml build
           sudo systemctl restart code-exercises
           sudo systemctl --no-pager --lines=0 status code-exercises
+          # Health gate: prove the app actually serves on :3200 after the
+          # restart, so a container that builds but boots broken fails the
+          # deploy loudly instead of going green while the app is down. No
+          # auto-rollback (no valuable server-side data here) — a RED run plus
+          # the last 80 journal lines is enough to diagnose.
+          curl -fsS --retry 5 --retry-delay 3 http://127.0.0.1:3200/ >/dev/null \
+            || { echo "Health check FAILED: app not serving on :3200 after restart"; sudo journalctl -u code-exercises --no-pager -n 80; exit 1; }
+          echo "Health check OK: app serving on 127.0.0.1:3200"
           EOF
