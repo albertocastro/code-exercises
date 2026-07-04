@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import type { ExerciseMeta } from "../../catalog";
 import type { ExerciseFiles } from "./manifest";
@@ -16,6 +16,10 @@ import {
   saveDraft,
   clearDraft,
   getDraftHistory,
+  getLearnerFiles,
+  saveLearnerFile,
+  deleteLearnerFile,
+  clearLearnerFiles,
   type DraftFile,
   type DraftSnapshot,
 } from "./drafts";
@@ -64,6 +68,38 @@ type QualityScoreState =
 type QualityScoreScope = "exercise" | `level-${number}`;
 const LAYOUT_KEY = "code-exercises-layout";
 const EXECUTION_DEBOUNCE_MS = 800;
+// Learner file tabs live under a distinct id namespace so they can never collide
+// with the fixed tab ids (solution/test/preview/styles/main/perf).
+const LEARNER_TAB_PREFIX = "learner:";
+// Author-shipped / built-in names a learner file may not shadow.
+const RESERVED_FILE_NAMES = new Set([
+  "solution.tsx",
+  "solution.ts",
+  "preview.tsx",
+  "styles.css",
+  "README.md",
+  "Main.java",
+]);
+const ALLOWED_LEARNER_EXTS = [".css", ".ts", ".tsx"];
+
+function learnerStarter(name: string): string {
+  if (name.endsWith(".css")) return `/* ${name} — your styles. Import it: import "./${name}"; */\n`;
+  const base = name.replace(/\.(tsx?)$/, "");
+  return `// ${name} — your module. Import it: import { thing } from "./${base}";\n`;
+}
+
+// Validate a proposed learner filename against the current set. Returns an error
+// string to show the learner, or null when the name is acceptable.
+function validateLearnerName(raw: string, existing: string[]): string | null {
+  const name = raw.trim();
+  if (!name) return "Enter a file name.";
+  if (name.includes("/") || name.includes("\\")) return "Use a flat name — no folders or slashes.";
+  if (!ALLOWED_LEARNER_EXTS.some((ext) => name.endsWith(ext)))
+    return "File must end in .css, .ts, or .tsx.";
+  if (RESERVED_FILE_NAMES.has(name)) return `"${name}" is a reserved file name.`;
+  if (existing.includes(name)) return `"${name}" already exists.`;
+  return null;
+}
 const SELF_IMPORT_RE =
   /(?:from\s+["']|require\(\s*["'])(?:\.\/|\/)solution(?:\.[tj]sx?)?["']/;
 
@@ -128,6 +164,16 @@ export function Workspace({
   const [stylesCode, setStylesCode] = useState(
     () => getDraft(key, "styles") ?? files.stylesCode ?? ""
   );
+  // Learner-created files ({ filename: content }), persisted per exercise. Only
+  // React exercises expose the "+ Add file" affordance (module resolution +
+  // preview live there); leetcode/Java use a different runner path.
+  const supportsLearnerFiles = categoryId === "react";
+  const [learnerFiles, setLearnerFiles] = useState<Record<string, string>>(() =>
+    supportsLearnerFiles ? getLearnerFiles(key) : {}
+  );
+  // Stable key over learner-file contents so the test effect and preview only
+  // re-run when a learner file actually changes (not on every unrelated render).
+  const learnerFilesSig = useMemo(() => JSON.stringify(learnerFiles), [learnerFiles]);
   const [executionCode, setExecutionCode] = useState(code);
   const [javaMainCode, setJavaMainCode] = useState(
     () => getDraft(`${key}/java`, "main") ?? files.javaMainCode ?? ""
@@ -220,6 +266,7 @@ export function Workspace({
     setTestsRunning(true);
     setConsoleEntries([]);
     setActiveFile("solution");
+    setLearnerFiles(supportsLearnerFiles ? getLearnerFiles(key) : {});
     setTab(hasPreview ? "preview" : "tests");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [language, exercise.id]);
@@ -247,6 +294,12 @@ export function Workspace({
     if (activeFile === "styles") {
       setStylesCode(next);
       saveDraft(key, next, "styles");
+      return;
+    }
+    if (activeFile.startsWith(LEARNER_TAB_PREFIX)) {
+      const name = activeFile.slice(LEARNER_TAB_PREFIX.length);
+      setLearnerFiles((prev) => ({ ...prev, [name]: next }));
+      saveLearnerFile(key, name, next);
       return;
     }
     if (activeFile !== "solution") return;
@@ -308,6 +361,34 @@ export function Workspace({
     clearDraft(`${key}/java`, "main", "Before main reset");
     setJavaMainCode(currentMainStarter);
   };
+  const addLearnerFile = () => {
+    const raw = window.prompt(
+      "New file name (.css, .ts, or .tsx). Import it from solution.tsx with a same-folder path, e.g. import \"./theme.css\"."
+    );
+    if (raw === null) return; // cancelled
+    const name = raw.trim();
+    const error = validateLearnerName(name, Object.keys(learnerFiles));
+    if (error) {
+      window.alert(error);
+      return;
+    }
+    const starter = learnerStarter(name);
+    setLearnerFiles((prev) => ({ ...prev, [name]: starter }));
+    saveLearnerFile(key, name, starter);
+    setActiveFile(`${LEARNER_TAB_PREFIX}${name}`);
+  };
+  const deleteLearnerFileTab = (tabId: string) => {
+    const name = tabId.slice(LEARNER_TAB_PREFIX.length);
+    if (!window.confirm(`Delete ${name}? This removes the file and its draft.`)) return;
+    deleteLearnerFile(key, name);
+    setLearnerFiles((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+    // If the deleted file's tab was open, fall back to the solution tab.
+    setActiveFile((current) => (current === tabId ? "solution" : current));
+  };
   const resetWholeExercise = () => {
     if (!confirm("Reset this exercise? This deletes its draft and progress, then returns to level 1.")) {
       return;
@@ -318,11 +399,14 @@ export function Workspace({
     if (hasJava) clearDraft(`${key}/java`, "main", "Before exercise reset");
     clearDraft(key, "preview", "Before exercise reset");
     clearDraft(key, "styles", "Before exercise reset");
+    clearLearnerFiles(key);
     setCode(currentSolutionStarter);
     setExecutionCode(currentSolutionStarter);
     setPreviewCode(files.previewCode ?? "");
     setJavaMainCode(currentMainStarter);
     setStylesCode(files.stylesCode ?? "");
+    setLearnerFiles({});
+    setActiveFile("solution");
     setProg(resetExercise(key));
     setGreen(false);
     setHint(null);
@@ -469,7 +553,8 @@ export function Workspace({
               executionCode,
               level,
               consoleSink,
-              hasStyles ? stylesCode : undefined
+              hasStyles ? stylesCode : undefined,
+              learnerFiles
             );
       if (cancelled) return;
       setTestResult(result);
@@ -482,9 +567,11 @@ export function Workspace({
       window.clearTimeout(timeout);
     };
     // `onConsole` and `onResult` are render-local callbacks; this effect is keyed
-    // to the code/test inputs that should actually trigger a fresh run.
+    // to the code/test inputs that should actually trigger a fresh run. A learner
+    // file edit must also re-run: key on its serialized contents (stable across
+    // renders that don't change any learner file).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTestCode, executionCode, hasStyles, stylesCode, level, testNonce, language]);
+  }, [currentTestCode, executionCode, hasStyles, stylesCode, level, testNonce, language, learnerFilesSig]);
 
   const submit = () => {
     const completesExercise = level === exercise.levels;
@@ -859,6 +946,14 @@ export function Workspace({
   if (files.previewCode) openFiles.preview = { path: "/preview.tsx", code: previewCode, ro: false };
   if (hasStyles) openFiles.styles = { path: "/styles.css", code: stylesCode, ro: false };
   if (files.perfCode) openFiles.perf = { path: "/perf.ts", code: files.perfCode, ro: true };
+  const learnerFileNames = Object.keys(learnerFiles).sort((a, b) => a.localeCompare(b));
+  for (const name of learnerFileNames) {
+    openFiles[`${LEARNER_TAB_PREFIX}${name}`] = {
+      path: `/${name}`,
+      code: learnerFiles[name],
+      ro: false,
+    };
+  }
   const af = openFiles[activeFile] ?? openFiles.solution;
 
   const fileEntries: FileEntry[] = [
@@ -868,6 +963,12 @@ export function Workspace({
     ...(files.previewCode ? [{ id: "preview", name: "preview.tsx", readOnly: false }] : []),
     ...(hasStyles ? [{ id: "styles", name: "styles.css", readOnly: false }] : []),
     ...(files.perfCode ? [{ id: "perf", name: "perf.ts", readOnly: true }] : []),
+    ...learnerFileNames.map((name) => ({
+      id: `${LEARNER_TAB_PREFIX}${name}`,
+      name,
+      readOnly: false,
+      deletable: true,
+    })),
   ];
 
   const editorBody = (
@@ -922,6 +1023,7 @@ export function Workspace({
       previewCode={previewCode}
       solutionCode={executionCode}
       stylesCode={hasStyles ? stylesCode : undefined}
+      learnerFiles={learnerFiles}
       standaloneUrl={`/preview/${categoryId}/${exercise.id}`}
       onConsole={onConsole}
     />
@@ -1182,6 +1284,8 @@ export function Workspace({
           collapsed={explorerCollapsed}
           onToggle={() => setExplorerCollapsed((value) => !value)}
           onSelect={setActiveFile}
+          onAddFile={supportsLearnerFiles ? addLearnerFile : undefined}
+          onDeleteFile={supportsLearnerFiles ? deleteLearnerFileTab : undefined}
         />
         <div className="ws-main">
       {layout === "split" ? (

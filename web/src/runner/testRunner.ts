@@ -1,5 +1,5 @@
 import { transpile } from "./transpile";
-import { evalModule, makeRequire } from "./modules";
+import { clearLearnerCss, evalModule, makeRequire, type LearnerFiles } from "./modules";
 import { expect, makeVi } from "./expectSetup";
 import { clearSandbox } from "./rtl";
 import { makeCapturedConsole, type ConsoleSink } from "./consoleCapture";
@@ -147,9 +147,13 @@ export async function runExercise(
   solutionCode: string,
   level: number,
   onConsole?: ConsoleSink,
-  stylesCode?: string
+  stylesCode?: string,
+  learnerFiles?: LearnerFiles
 ): Promise<RunResult> {
   const capturedConsole = makeCapturedConsole("tests", onConsole);
+  // Drop learner CSS from the previous run so only currently-imported stylesheets
+  // affect the graded DOM (matches the live preview).
+  clearLearnerCss();
   if (SELF_IMPORT_RE.test(solutionCode)) {
     return {
       rows: [],
@@ -163,9 +167,15 @@ export async function runExercise(
 
   let solutionExports: Record<string, unknown>;
   try {
-    solutionExports = evalModule(transpile(solutionCode), makeRequire({}, stylesCode), {
-      console: capturedConsole,
-    });
+    solutionExports = evalModule(
+      transpile(solutionCode),
+      makeRequire({
+        css: stylesCode,
+        learnerFiles,
+        moduleGlobals: { console: capturedConsole },
+      }),
+      { console: capturedConsole }
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { rows: [], passed: 0, failed: 0, skipped: 0, compileError: `solution.tsx — ${msg}` };
