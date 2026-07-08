@@ -19,6 +19,7 @@ import { createServer } from "node:http";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerApiRoutes } from "../web-api/handlers.mjs";
+import { metricsHandler } from "./metrics.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -138,6 +139,12 @@ function serveStatic(req, res) {
 
 const server = createServer((req, res) => {
   const pathname = (req.url ?? "/").split("?")[0];
+  if (pathname === "/metrics") {
+    return metricsHandler(req, res).catch((e) => {
+      if (!res.headersSent) res.statusCode = 500;
+      res.end(String(e?.message ?? e));
+    });
+  }
   if (pathname.startsWith("/api/")) {
     const handler = matchApi(req);
     if (handler) {
