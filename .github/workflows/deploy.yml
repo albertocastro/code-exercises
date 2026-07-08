@@ -1,9 +1,17 @@
 name: Deploy code-exercises
 
 # Separate, self-contained workflow. It only ever touches code-exercises on
-# the box (git checkout at ~/code-exercises + the code-exercises.service
-# unit). It never restarts, rebuilds, or reads any next-role-* or learnos
-# service — those have their own workflows.
+# the box (the ~/code-exercises checkout + the code-exercises.service unit).
+# It never restarts, rebuilds, or reads any next-role-* or learnos service —
+# those have their own workflows.
+#
+# Build model: OFF-BOX build shipped via `docker save`/`docker load` (no
+# registry, no GHCR, no credentials on the box). CI builds the image, streams
+# it to the box as a gzipped tarball over the existing tailnet SSH, and the box
+# only `docker load`s + tags + restarts. The box NEVER builds — the shared
+# 3.8 GiB box can't spare the RAM/CPU for an image build without risking the
+# co-located next-role-2 and LearnOS. This mirrors the save/load pattern
+# already running in production for those two services.
 
 on:
   push:
@@ -33,19 +41,29 @@ jobs:
       # is baked into the app image and checked at container startup instead.
       - run: npm ci --ignore-scripts
 
-      # CI validates the app builds and tests pass. Note: unlike next-role-2,
-      # we do NOT ship node_modules or the build to the box — the box rebuilds
-      # the Docker image from source itself (see the deploy step), so the CI
-      # runner's architecture is irrelevant. This is purely a gate.
+      # CI gate: validate the app compiles. This is the ONLY gate.
+      #
+      # NOTE: there is deliberately NO jest/vitest gate. The exercises repo ships
+      # UNIMPLEMENTED learner starter stubs (e.g. `export class EventBus {}`), so
+      # `npm test` / `npm run test:react` fail BY DESIGN (~325/502 red) and can
+      # never gate a deploy on this repo. The Build step below is the pre-deploy
+      # compile gate; runtime correctness (HTTP 200, in-process Java, non-root,
+      # no docker.sock) is proven on-box by the health check after the image is
+      # loaded and the service restarts.
       - name: Build (static web IDE bundle)
         run: npm run web:build
 
-      # NOTE: no jest/vitest gate here. The exercises repo ships deliberately
-      # UNIMPLEMENTED learner starter stubs (e.g. `export class EventBus {}`), so
-      # `npm test` / `npm run test:react` fail by design (~325/502 red) and can
-      # never gate a deploy on this repo. The Build step above is the pre-deploy
-      # compile gate; runtime correctness (HTTP 200, in-process Java, non-root,
-      # no docker.sock) is proven on-box after the image rebuild.
+      # Off-box image build. GitHub's ubuntu-latest runners are linux/amd64;
+      # the shared box is amd64 too (same box that already runs the amd64
+      # next-role-2 and learnos images built this same way), so the loaded image
+      # is arch-correct. The Dockerfile runs its own `npm run web:build` in a
+      # builder stage, so the gate above is a fast fail-fast check, not the
+      # source of the shipped bundle.
+      - name: Build and save the image
+        run: |
+          docker build -t code-exercises:${GITHUB_SHA} .
+          docker save code-exercises:${GITHUB_SHA} | gzip > ce-image.tar.gz
+          ls -lh ce-image.tar.gz
 
       - name: Join tailnet
         uses: tailscale/github-action@v3
@@ -69,47 +87,77 @@ jobs:
             sleep 3
           done
 
-      # Ship the CI checkout to the box with rsync (mirrors next-role-2 and
-      # learnos). The box therefore needs NO GitHub credentials for this
-      # private repo — the runner is already authed and holds the source.
-      # --delete keeps ~/code-exercises a faithful mirror of main; the
+      # Ship the compose/deploy manifests to the box with rsync (mirrors
+      # next-role-2 and learnos). The box therefore needs NO GitHub credentials
+      # for this private repo — the runner is already authed and holds the
+      # source. --delete keeps ~/code-exercises a faithful mirror of main; the
       # excludes never ship or wipe build junk, and /var/lib/code-exercises
       # (runtime state) lives outside ~/code-exercises so it's never touched.
-      - name: Sync source to the box
+      # The box does NOT build from this source — the image arrives pre-built in
+      # the tarball below; this rsync just keeps docker-compose.yml,
+      # deploy/docker-compose.prod.yml, the systemd unit, and docs in sync.
+      - name: Sync manifests to the box
         run: |
           rsync -az --delete --info=stats1 \
             --exclude '.git/' \
             --exclude '.github/' \
             --exclude 'node_modules/' \
             --exclude 'dist-web/' \
+            --exclude 'ce-image.tar.gz' \
             -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new" \
             ./ deploy@${{ vars.DEPLOY_HOST }}:~/code-exercises/
 
-      - name: Rebuild image and restart on the box
+      # Stream the gzipped image tarball to the box.
+      - name: Ship the image tarball
+        run: |
+          scp -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new \
+            ce-image.tar.gz deploy@${{ vars.DEPLOY_HOST }}:~/ce-image.tar.gz
+
+      - name: Load image and restart on the box
         run: |
           ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new \
-            deploy@${{ vars.DEPLOY_HOST }} bash -s <<'EOF'
+            deploy@${{ vars.DEPLOY_HOST }} "IMAGE_SHA='${GITHUB_SHA}' bash -s" <<'EOF'
           set -euo pipefail
+          TARBALL="$HOME/ce-image.tar.gz"
+          # Always remove the tarball from the box, success or fail.
+          trap 'rm -f "$TARBALL"' EXIT
+
           cd ~/code-exercises
-          # Rebuild the image on the box (arch-correct, no cross-arch
-          # node_modules concern) and restart. `systemctl restart` runs
-          # ExecStop (compose down) then ExecStart (compose up) with the
-          # freshly built image. Persistent state under /var/lib/code-exercises
-          # is bind-mounted, so it survives the recreate untouched.
-          docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml build
+
+          # Load the pre-built image (arch-correct amd64 from CI). This does NOT
+          # build anything on the box.
+          gunzip -c "$TARBALL" | docker load
+
+          # Keep the currently-live image as :previous for a fast rollback if the
+          # new one boots broken.
+          if docker image inspect code-exercises:local >/dev/null 2>&1; then
+            docker tag code-exercises:local code-exercises:previous
+          fi
+
+          # Promote the freshly-loaded image to the tag compose actually runs
+          # (docker-compose.yml pins image: code-exercises:local).
+          docker tag "code-exercises:${IMAGE_SHA}" code-exercises:local
+
+          # ExecStart is `docker compose up`: because code-exercises:local now
+          # exists locally, compose USES it and never builds. Persistent state
+          # under /var/lib/code-exercises is bind-mounted, so it survives the
+          # recreate untouched.
           sudo systemctl restart code-exercises
           sudo systemctl --no-pager --lines=0 status code-exercises
+
           # Health gate: prove the app actually serves on :3200 after the
-          # restart, so a container that builds but boots broken fails the
-          # deploy loudly instead of going green while the app is down. No
-          # auto-rollback (no valuable server-side data here) — a RED run plus
-          # the last 80 journal lines is enough to diagnose.
-          # Poll until the app serves (the container takes a couple seconds to
-          # recreate + boot Node after the restart). --retry-connrefused is
-          # required: curl's --retry alone does NOT retry connection-refused,
-          # which is exactly what we get during the boot window.
-          if curl -fsS --retry 10 --retry-delay 2 --retry-connrefused --max-time 10 \
-               http://127.0.0.1:3200/ >/dev/null; then
+          # restart (the container takes a couple seconds to recreate + boot
+          # Node). ~60s budget: 30 attempts x 2s.
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 5 http://127.0.0.1:3200/ >/dev/null 2>&1; then
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$ok" = "1" ]; then
             echo "Health check OK: app serving on 127.0.0.1:3200"
           else
             echo "Health check FAILED: app not serving on :3200 after restart"
@@ -117,6 +165,18 @@ jobs:
             # without sudo (default journald ACLs); avoid sudo here so a missing
             # NOPASSWD rule can't mask the real failure with a tty prompt.
             journalctl -u code-exercises --no-pager -n 80 2>/dev/null || true
+            # Roll back to the last-good image if we have one, then fail the run.
+            if docker image inspect code-exercises:previous >/dev/null 2>&1; then
+              echo "Rolling back: retagging code-exercises:previous -> code-exercises:local"
+              docker tag code-exercises:previous code-exercises:local
+              sudo systemctl restart code-exercises
+            fi
             exit 1
           fi
           EOF
+
+      # Clean up the tarball on the runner regardless of outcome (the box side
+      # cleans itself via the trap above).
+      - name: Clean up runner tarball
+        if: always()
+        run: rm -f ce-image.tar.gz

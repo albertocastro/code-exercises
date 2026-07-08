@@ -73,9 +73,40 @@ for d in codex; do
   sudo chown -R "$CONTAINER_UID:$CONTAINER_UID" "$STATE_ROOT/$d"
 done
 
-echo "==> Building the code-exercises image on this box"
 cd "$REPO_DIR"
-"${COMPOSE[@]}" build
+
+# This box does NOT build the image — that's the whole point of the off-box
+# save/load model (see docs/deploy.md). CI builds the image on the GitHub
+# runner and ships it here via `docker save | ssh docker load`, tagging the
+# loaded image `code-exercises:local` (the tag compose runs). Bootstrap only
+# needs to detect whether that image is already present.
+echo "==> Checking for the code-exercises:local image (built off-box, shipped via docker save/load)"
+if docker image inspect code-exercises:local >/dev/null 2>&1; then
+  echo "    Found code-exercises:local — the service can start now."
+  IMAGE_READY=1
+else
+  IMAGE_READY=0
+  cat <<'MSG'
+    No code-exercises:local image on this box yet. This host never builds it.
+    Deliver the image one of two ways, THEN the service starts serving:
+
+      A) Push to `main` — the Deploy code-exercises workflow builds the image on
+         the GitHub runner and loads + tags it here automatically.
+
+      B) Load a tarball you built elsewhere (e.g. a laptop with a working
+         Docker), for an immediate first cutover without waiting on CI:
+           # on a machine that CAN build:
+           docker build -t code-exercises:bootstrap .
+           docker save code-exercises:bootstrap | gzip > ce-image.tar.gz
+           scp ce-image.tar.gz deploy@<box>:~/
+           # on the box:
+           gunzip -c ~/ce-image.tar.gz | docker load
+           docker tag code-exercises:bootstrap code-exercises:local
+
+    The systemd unit is installed and enabled below regardless; it will come up
+    on the next `restart` once code-exercises:local exists.
+MSG
+fi
 
 echo "==> Installing systemd unit ($UNIT)"
 # Symlink (not copy) so `git pull`/rsync keeps the unit definition in sync; a
@@ -84,16 +115,38 @@ echo "==> Installing systemd unit ($UNIT)"
 sudo ln -sf "$SYSTEMD_SRC" "$SYSTEMD_DST"
 sudo systemctl daemon-reload
 sudo systemctl enable "$UNIT"
-sudo systemctl restart "$UNIT"
+# Only start if an image is actually present — otherwise `docker compose up`
+# would try to BUILD the missing image on this box, which is exactly what the
+# off-box model avoids. Once the image is loaded (via CI or a manual tarball),
+# re-run this script or `sudo systemctl restart code-exercises`.
+if [[ "$IMAGE_READY" == "1" ]]; then
+  sudo systemctl restart "$UNIT"
+else
+  echo "==> Skipping service start: no code-exercises:local image yet (see note above)."
+fi
 
 echo
 echo "==> Done. Service status:"
 sudo systemctl --no-pager --lines=0 status "$UNIT" || true
 
+if [[ "$IMAGE_READY" != "1" ]]; then
+cat <<MSG
+
+Service NOT started yet — no code-exercises:local image on this box. Deliver the
+image first (push to \`main\` for a CI load, or load a tarball manually as shown
+above), then run:
+
+  sudo systemctl restart code-exercises
+
+...and continue with the codex login step below.
+MSG
+fi
+
 cat <<MSG
 
 Next — one-time MANUAL step (the image ships without codex auth on purpose):
-authenticate the codex CLI so the mounted volume carries a valid session.
+once the service is RUNNING, authenticate the codex CLI so the mounted volume
+carries a valid session.
 
   ${COMPOSE[*]} exec code-exercises codex login
 

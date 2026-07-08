@@ -30,10 +30,42 @@ The artifacts:
 | [`deploy/systemd/code-exercises.service`](../deploy/systemd/code-exercises.service) | Runs `docker compose up` under systemd; `Restart=always`, journald logs. |
 | [`deploy/docker-compose.prod.yml`](../deploy/docker-compose.prod.yml) | Override that swaps the codex named volume for a host bind-mount under `/var/lib/code-exercises`. |
 | [`deploy/install.sh`](../deploy/install.sh) | Idempotent one-time bootstrap on the box. |
-| [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) | On push to `main`: build+test in CI, then SSH over Tailscale to rebuild + restart. |
+| [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) | On push to `main`: compile-gate + **build the image off-box in CI**, ship it over Tailscale SSH via `docker save`/`docker load`, then tag + restart on the box. The box never builds. |
 
 CI does **not** perform the first cutover — the initial codex login is manual
 (the image intentionally ships without auth). Follow the checklist below.
+
+### Build model — off-box `docker save`/`docker load` (no registry)
+
+The shared 3.8 GiB box **never builds** the image — an image build there would
+contend for RAM/CPU with the co-located next-role-2 and LearnOS. Instead, the
+GitHub Actions runner builds the image and ships it to the box as a gzipped
+tarball over the **existing tailnet SSH** — no GHCR, no registry, and **no
+GitHub/registry credentials on the box**. The box only `docker load`s the
+tarball, tags it `code-exercises:local`, and restarts the service (this is the
+same save/load pattern already running in production for next-role-2 and
+LearnOS).
+
+Flow per push to `main`:
+
+1. **CI (runner):** `npm ci` → `npm run web:build` (compile gate) →
+   `docker build -t code-exercises:$GITHUB_SHA .` → `docker save … | gzip >
+   ce-image.tar.gz`.
+2. **Ship:** rsync the manifests + `scp ce-image.tar.gz` to the box over
+   Tailscale SSH.
+3. **Box (one SSH heredoc):** `docker load`; if `code-exercises:local` exists,
+   tag it `:previous` (rollback slot); tag `$GITHUB_SHA` → `code-exercises:local`;
+   `sudo systemctl restart code-exercises` (ExecStart is `docker compose up`,
+   which finds the loaded `:local` image and **never builds**); health-check
+   `curl http://127.0.0.1:3200/` (~60s). On failure it retags `:previous` →
+   `:local`, restarts, and fails the run. The tarball is removed from the box
+   and the runner afterward.
+
+> **Architecture:** GitHub's `ubuntu-latest` runners are **linux/amd64**, so the
+> box must be amd64 — it is (the same box already runs the amd64 next-role-2 and
+> LearnOS images built this exact way). If the box were ever moved to arm64,
+> switch the CI build to `docker buildx build --platform linux/amd64` or build
+> for the box's arch.
 
 ---
 
@@ -147,14 +179,37 @@ bash deploy/install.sh
 ```
 
 This verifies Docker, creates `/var/lib/code-exercises/codex` owned by
-uid/gid 1001 (matching the non-root `appuser` the container runs as), builds
-the image on the box, symlinks + enables `code-exercises.service`, and starts
-it. Re-runnable at any time.
+uid/gid 1001 (matching the non-root `appuser` the container runs as), symlinks +
+enables `code-exercises.service`, and — **if the `code-exercises:local` image is
+already present** — starts it. Re-runnable at any time.
+
+The box does **not** build the image (off-box model). On a fresh box there is no
+`code-exercises:local` yet, so `install.sh` installs + enables the unit but
+**skips starting** it and prints how to deliver the image. Get the image there
+one of two ways, then `sudo systemctl restart code-exercises`:
+
+- **Trigger a CI deploy:** push any commit to `main` — the workflow builds the
+  image on the runner and loads + tags it here automatically (this is the normal
+  steady-state path).
+- **Load a tarball manually** (immediate first cutover, no CI wait) from a
+  machine that can build:
+
+  ```bash
+  # on a machine with a working Docker (e.g. a laptop):
+  docker build -t code-exercises:bootstrap .
+  docker save code-exercises:bootstrap | gzip > ce-image.tar.gz
+  scp ce-image.tar.gz deploy@<box>:~/
+  # on the box:
+  gunzip -c ~/ce-image.tar.gz | docker load
+  docker tag code-exercises:bootstrap code-exercises:local
+  sudo systemctl restart code-exercises
+  ```
 
 ### 4. Authenticate codex (the manual cutover step)
 
-The image ships **without** codex auth. Log the CLI in **once**; the token
-lands in the mounted host dir and persists across deploys:
+The image ships **without** codex auth. Once the service is **running** (image
+delivered per step 3), log the CLI in **once**; the token lands in the mounted
+host dir and persists across deploys:
 
 ```bash
 cd ~/code-exercises
@@ -185,7 +240,9 @@ Because CI won't do the first cutover, run through this once:
 - [ ] Docker + Compose v2 present; `deploy` in the `docker` group
 - [ ] `/etc/sudoers.d/code-exercises` added (systemctl, ln, mkdir, chown)
 - [ ] `~/code-exercises` populated on the box (one-time clone or rsync from laptop)
-- [ ] `bash deploy/install.sh` succeeded; `systemctl status code-exercises` is active
+- [ ] `bash deploy/install.sh` succeeded (unit installed + enabled)
+- [ ] `code-exercises:local` image delivered (push to `main` for a CI load, or a
+      manual tarball load); `systemctl status code-exercises` is active
 - [ ] `codex login` completed inside the container
 - [ ] `http://<tailnet-host>:3200` loads from a tailnet device
 - [ ] Java exercises run end-to-end (in-process JDK: `java -version` resolves in the container)
@@ -206,7 +263,7 @@ Because CI won't do the first cutover, run through this once:
 | Restart | `sudo systemctl restart code-exercises` |
 | Stop | `sudo systemctl stop code-exercises` |
 | Start | `sudo systemctl start code-exercises` |
-| Deploy a code change | Push to `main` — the workflow rsyncs, rebuilds, restarts. (Or manually: rsync `~/code-exercises` from a laptop, then `docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml build && sudo systemctl restart code-exercises` on the box.) |
+| Deploy a code change | Push to `main` — CI builds the image off-box and ships it via `docker save`/`docker load`, then restarts. (Or manually, from a machine that can build: `docker build -t code-exercises:manual . && docker save code-exercises:manual \| gzip > ce-image.tar.gz`, `scp` it to the box, then on the box `gunzip -c ce-image.tar.gz \| docker load && docker tag code-exercises:manual code-exercises:local && sudo systemctl restart code-exercises`.) |
 | Re-auth codex | `docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml exec code-exercises codex login` |
 
 ### Rollback
@@ -254,9 +311,16 @@ the app code/image changes.
   docs.
 - **Java exercises fail on the box but work locally** — the JDK runs in-process
   inside the container; confirm it resolves with
-  `docker compose exec code-exercises java -version`. If missing, rebuild the
-  image (`docker compose ... build --no-cache`). There is no Docker socket to
-  check — Java no longer runs in a sibling container.
+  `docker compose exec code-exercises java -version`. If missing, the box is
+  running a stale/bad image — the box does not build, so re-ship: push to `main`
+  (CI rebuilds + reloads) or load a freshly-built tarball manually (see step 3 /
+  Day-2). There is no Docker socket to check — Java no longer runs in a sibling
+  container.
+- **Deploy fails at `docker load` / "no space left"** — the gzipped image
+  tarball plus the loaded image need headroom on the box; check `docker system
+  df` and `docker image prune`. Stale `code-exercises:previous`/`<sha>` tags from
+  old deploys can be pruned; `:local` (live) and one `:previous` (rollback) are
+  the only tags the deploy relies on.
 - **App reachable from the public internet** — the security group is exposing
   3200. Close it; code-exercises must be tailnet-only.
 

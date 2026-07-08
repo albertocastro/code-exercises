@@ -15,6 +15,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Local tag only — NOT a registry/GHCR reference. For local dev, `docker
+    # compose build` builds this from the `build:` block above. In production
+    # the box does NOT build: CI builds the image off-box, ships it via
+    # `docker save`/`docker load`, and tags the loaded image
+    # `code-exercises:local` so this `up` finds it and never triggers a build
+    # (see docs/deploy.md and .github/workflows/deploy.yml).
     image: code-exercises:local
     container_name: code-exercises
     restart: unless-stopped
