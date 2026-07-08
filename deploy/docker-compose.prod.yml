@@ -25,5 +25,15 @@
 
 services:
   code-exercises:
+    # Memory ceiling. On the shared 3.8 GiB box an unbounded container can drag
+    # the whole host into the kernel OOM-killer (which locks the box, not just
+    # the container). This app spawns in-process `javac`/`java` (each JVM is
+    # 100-300 MiB) plus the `codex` CLI for review/scoring, so concurrent
+    # submissions are the spike risk — the cgroup limit kills a runaway inside
+    # THIS container and auto-restarts it, leaving LearnOS and next-role alone.
+    # Steady state is ~30 MiB; sized for a couple of concurrent Java runs.
+    mem_limit: 1g
+    mem_reservation: 256m
+    memswap_limit: 1536m
     volumes:
       - /var/lib/code-exercises/codex:/home/appuser/.codex
