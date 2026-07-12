@@ -35,5 +35,19 @@ services:
     mem_limit: 1g
     mem_reservation: 256m
     memswap_limit: 1536m
+    # AI Gateway cutover. Route the codex-backed agent calls (score / pr-review /
+    # pixel-perfect vision) through the shared AI Gateway instead of spawning the
+    # codex CLI in-container. Merged ON TOP of the base compose `environment:`.
+    #
+    #  - EXERCISE_AGENT_MODE=gateway flips runAgent() to runAgentViaGateway()
+    #    (POST http://ai.box.internal/v1/complete). Set back to `local` to roll
+    #    back to the in-container codex spawn — no image rebuild needed.
+    #  - The gateway URL is PINNED explicitly: the app's baked-in default
+    #    (ai-gateway.box.internal / 127.0.0.1:8080) does NOT route on this box.
+    #    ai.box.internal is the live gateway (Traefik) and is reachable from the
+    #    container on the tailnet.
+    environment:
+      EXERCISE_AGENT_MODE: gateway
+      CODE_EXERCISES_GATEWAY_URL: "http://ai.box.internal"
     volumes:
       - /var/lib/code-exercises/codex:/home/appuser/.codex
