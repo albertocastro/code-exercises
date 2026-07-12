@@ -12,6 +12,7 @@
     "watch": "jest --watchAll",
     "test:react": "vitest run",
     "watch:react": "vitest",
+    "test:gateway": "vitest run --config vitest.gateway.config.ts",
     "test:all": "jest && vitest run",
     "preview:web": "vite",
     "web": "node scripts/runtime.mjs up all && vite --config vite.web.config.ts",

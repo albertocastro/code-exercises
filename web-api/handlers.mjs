@@ -696,14 +696,137 @@ function normalizeScoreOutput(output) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// AI Gateway client (EXERCISE_AGENT_MODE=gateway)
+// ---------------------------------------------------------------------------
+//
+// When EXERCISE_AGENT_MODE=gateway, agent calls are routed over HTTP to the
+// shared AI Gateway's buffered `POST /v1/complete` endpoint instead of spawning
+// the codex CLI locally. The gateway fronts the same subscription codex CLI and
+// owns the GLOBAL concurrency cap, so the local `agentLimiter` is bypassed in
+// this mode and the gateway's own `429 {error:"busy"}` is surfaced as the
+// existing "busy" UI message (err.busy = true → respondBusyOr → HTTP 429).
+//
+// The prompt is fully self-contained (solution/README/perf are inlined via
+// `inlineContext`), so nothing here depends on the gateway seeing local files.
+// A screenshot, if present, is sent as a base64 `images[]` entry; the gateway
+// reconstructs it to a temp file and passes it to codex as `-i <file>` server
+// side (the same `-i … --` contract as the local vision path).
+//
+// Contract (see ai-gateway/src/routes/complete.ts + providers/codex.ts):
+//   request  {provider, model?, prompt, system?, timeoutMs?, clientId,
+//             requestId?, providerOptions?, images?}
+//   response {text, provider, model, usage, costUsd?}
+//   429 {error:"busy"}                 → backpressure
+//   503 {..., needsAuth:true}          → provider auth expiry
+function gatewayBaseUrl() {
+  const raw =
+    process.env.CODE_EXERCISES_GATEWAY_URL ||
+    process.env.AI_GATEWAY_URL ||
+    "http://127.0.0.1:8080";
+  return raw.replace(/\/+$/, "");
+}
+
+const GATEWAY_TIMEOUT_MS = 120_000;
+
+async function runAgentViaGateway(prompt, screenshotBase64) {
+  const url = gatewayBaseUrl();
+  // Mirror the local codex path: model from EXERCISE_AGENT_MODEL (codex default
+  // gpt-5.4-mini), effort from EXERCISE_AGENT_EFFORT. Effort maps to the
+  // documented `providerOptions.codex.effort` request field.
+  const model = process.env.EXERCISE_AGENT_MODEL || "gpt-5.4-mini";
+  const effort = process.env.EXERCISE_AGENT_EFFORT || "low";
+
+  const requestBody = {
+    provider: "codex",
+    model,
+    prompt,
+    clientId: "code-exercises",
+    providerOptions: { codex: { effort } },
+    timeoutMs: GATEWAY_TIMEOUT_MS,
+  };
+  // Vision path: a raw base64 PNG (no data-url prefix) → images[]. The gateway
+  // reconstructs `-i <tmpfile>` server-side, so the risky `-i … --` argv wiring
+  // lives entirely in the gateway, not here.
+  if (screenshotBase64) requestBody.images = [screenshotBase64];
+
+  // Abort a little after the server-side cap so a wedged connection can't hang
+  // the request forever; the gateway enforces its own child-process timeout.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GATEWAY_TIMEOUT_MS + 10_000);
+
+  let resp;
+  try {
+    resp = await fetch(`${url}/v1/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    const reason = e?.name === "AbortError" ? "timed out" : `unreachable (${e?.message ?? e})`;
+    throw new Error(`The review gateway at ${url} is ${reason}.`);
+  }
+  clearTimeout(timer);
+
+  // Backpressure → same "busy" UX as the local limiter's queue-full rejection.
+  if (resp.status === 429) {
+    const err = new Error("The review agent is busy right now. Try again shortly.");
+    err.busy = true;
+    throw err;
+  }
+
+  const readBody = async () => {
+    try {
+      return await resp.json();
+    } catch {
+      return undefined;
+    }
+  };
+
+  // Provider auth expiry → surface the gateway's message so the UI can prompt
+  // for re-auth instead of showing a generic failure.
+  if (resp.status === 503) {
+    const body = await readBody();
+    throw new Error(body?.message || "The review agent needs re-authentication.");
+  }
+  if (!resp.ok) {
+    const body = await readBody();
+    throw new Error(body?.message || `The review gateway failed (HTTP ${resp.status}).`);
+  }
+
+  const body = await readBody();
+  const text = typeof body?.text === "string" ? body.text.trim() : "";
+  if (!text) {
+    throw new Error("The review gateway returned an empty message.");
+  }
+  // Defense in depth: never accept a codex transcript / prompt echo as the
+  // answer (mirrors the local stdout guard). The gateway parses JSONL and
+  // returns clean assistant text, so this should never fire — but downstream
+  // normalizers must never mis-parse the embedded JSON schema example.
+  if (looksLikeCodexTranscript(text)) {
+    throw new Error("The review gateway returned a codex transcript instead of an answer.");
+  }
+  return text;
+}
+
 // Run one of the codex text agents (score/review/pr-review) or the pixel-perfect
 // vision agent. `screenshotBase64` (optional) is a raw base64 PNG with no data-url
 // prefix; when present AND we're using the DEFAULT codex command path, it's written
 // to <dir>/screenshot.png and passed to codex as an image input via `-i`.
-// Acquires an agent concurrency slot before doing anything else — a "busy"
-// rejection (queue full) throws straight out of `agentLimiter.run`, before any
-// scratch dir or `codex` process exists.
+//
+// EXERCISE_AGENT_MODE selects the surface: "gateway" routes over HTTP to the AI
+// Gateway (which owns the global cap), "local" (DEFAULT) keeps today's local
+// spawn path unchanged. Read lazily so tests can flip the flag per-case.
+//
+// In local mode: acquires an agent concurrency slot before doing anything else —
+// a "busy" rejection (queue full) throws straight out of `agentLimiter.run`,
+// before any scratch dir or `codex` process exists.
 function runAgent(p, ext, prompt, outputFile, screenshotBase64) {
+  if ((process.env.EXERCISE_AGENT_MODE || "local").toLowerCase() === "gateway") {
+    return runAgentViaGateway(prompt, screenshotBase64);
+  }
   return agentLimiter.run(() => {
     const dir = mkdtempSync(path.join(tmpdir(), "exercise-review-"));
     const outputPath = path.join(dir, outputFile);
