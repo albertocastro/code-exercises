@@ -76,7 +76,10 @@ ENV NODE_ENV=production \
 # (CODEX_HOME) is mounted at runtime (docker-compose.yml), never baked into the
 # image. The endpoints degrade gracefully (surface an error) if codex/auth is
 # absent. Java support does NOT depend on codex.
-RUN npm i -g @openai/codex \
+# PINNED: 0.143.0 regressed `codex exec` output (dumps its transcript to stdout,
+# leaves --output-last-message empty) which surfaced as "Score unavailable".
+# 0.142.5 is verified end-to-end; bump deliberately, not via silent auto-upgrade.
+RUN npm i -g @openai/codex@0.142.5 \
     && codex --version
 
 # Production deps only. `--ignore-scripts` skips the postinstall Java check.

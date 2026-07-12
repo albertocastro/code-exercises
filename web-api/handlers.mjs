@@ -509,7 +509,29 @@ function buildScorePrompt(p, ext) {
   );
 }
 
+// codex `exec` prints a human-readable transcript to one of its streams: a
+// config banner ("OpenAI Codex vX.Y.Z" + a "--------" rule), then the echoed
+// `user` prompt, then the `codex` reply. Historically (<=0.142.x) this went to
+// stderr and stdout carried only the final message; some later versions (0.143.0)
+// dump the whole transcript to stdout instead. That transcript echoes our prompt
+// verbatim — including the JSON *schema example* — so it must never be mistaken
+// for the agent's actual answer. Detect it so we can reject rather than mis-parse.
+function looksLikeCodexTranscript(s) {
+  return (
+    /^OpenAI Codex v\d/m.test(s) ||
+    (/^-{4,}\s*$/m.test(s) && /^user\s*$/m.test(s))
+  );
+}
+
 function normalizeScoreOutput(output) {
+  // Defense in depth: never parse a codex transcript / prompt echo as a score.
+  // The real fix lives in runAgent (it won't hand us one), but if it ever slips
+  // through, the schema example embedded in the echoed prompt must not surface as
+  // a bogus score.
+  if (looksLikeCodexTranscript(output)) {
+    throw new Error("Score agent returned a codex transcript instead of a JSON answer.");
+  }
+
   const start = output.indexOf("{");
   const end = output.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) {
@@ -655,10 +677,30 @@ function runAgent(p, ext, prompt, outputFile, screenshotBase64) {
     });
     proc.on("close", (code) => {
       clearTimeout(timer);
+      // The --output-last-message file is the source of truth for the agent's
+      // final message. Prefer it whenever codex wrote it.
       const finalOutput = existsSync(outputPath) ? readFileSync(outputPath, "utf8").trim() : "";
-      if (finalOutput) resolve(finalOutput);
-      else if (out.trim()) resolve(out.trim());
-      else reject(new Error(err.trim() || `Agent exited with code ${code} and no output.`));
+      if (finalOutput) {
+        resolve(finalOutput);
+        return;
+      }
+      // Empty output file: codex produced no final message (auth/quota failure,
+      // or a version whose `exec` only dumps a transcript). We may fall back to
+      // stdout ONLY when it's a genuine answer — never when it's codex's banner +
+      // echoed prompt, whose embedded JSON schema example would be mis-parsed as a
+      // real (but bogus) score. Fail loudly instead so the UI shows "unavailable"
+      // rather than a fabricated result.
+      const stdout = out.trim();
+      if (stdout && !looksLikeCodexTranscript(stdout)) {
+        resolve(stdout);
+        return;
+      }
+      reject(
+        new Error(
+          err.trim() ||
+            `Agent produced no final message (empty ${outputFile}); refusing to parse the codex transcript on stdout. Exit code ${code}.`
+        )
+      );
     });
   });
 }
