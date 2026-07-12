@@ -49,7 +49,7 @@ export function ConsolePanel({
     return entries.filter((entry) => {
       if (!levelFilter[entry.level] || !sourceFilter[entry.source]) return false;
       if (!needle) return true;
-      const haystack = `${entry.source} ${entry.level} ${entry.args.join(" ")}`.toLowerCase();
+      const haystack = `${entry.source} ${entry.test ?? ""} ${entry.level} ${entry.args.join(" ")}`.toLowerCase();
       return haystack.includes(needle);
     });
   }, [entries, levelFilter, query, sourceFilter]);
@@ -78,7 +78,12 @@ export function ConsolePanel({
   const copyVisible = async () => {
     try {
       await navigator.clipboard.writeText(
-        filtered.map((entry) => `[${entry.source}] [${entry.level}] ${entry.args.join(" ")}`).join("\n")
+        filtered
+          .map((entry) => {
+            const source = entry.test ? `${entry.source} · ${entry.test}` : entry.source;
+            return `[${source}] [${entry.level}] ${entry.args.join(" ")}`;
+          })
+          .join("\n")
       );
       setCopyState("done");
     } catch {
@@ -156,6 +161,12 @@ export function ConsolePanel({
             <div key={entry.id} className={`console-row ${entry.level}`}>
               <span className="console-source">
                 <Highlight text={entry.source} query={query.trim()} />
+                {entry.test ? (
+                  <span className="console-test">
+                    {" · "}
+                    <Highlight text={entry.test} query={query.trim()} />
+                  </span>
+                ) : null}
               </span>
               <span className="console-level">
                 <Highlight text={entry.level} query={query.trim()} />

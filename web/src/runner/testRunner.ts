@@ -94,7 +94,7 @@ function createHarness() {
   };
 }
 
-async function runTree(root: DescribeNode): Promise<RunResult> {
+async function runTree(root: DescribeNode, currentTest: { name?: string }): Promise<RunResult> {
   const rows: TestRow[] = [];
 
   async function walk(node: DescribeNode, befores: Fn[], afters: Fn[]) {
@@ -106,6 +106,10 @@ async function runTree(root: DescribeNode): Promise<RunResult> {
       } else if (child.skip) {
         rows.push({ name: child.name, status: "skip", line: child.line });
       } else {
+        // Tests run strictly sequentially (this `await` blocks the loop), so a
+        // single shared pointer correctly scopes console logs — including ones
+        // from beforeEach/afterEach hooks — to whichever test is in flight.
+        currentTest.name = child.name;
         try {
           for (const fn of b) await fn();
           await child.fn();
@@ -127,6 +131,7 @@ async function runTree(root: DescribeNode): Promise<RunResult> {
             }
           }
           clearSandbox(); // unmount + clear the isolated sandbox only
+          currentTest.name = undefined;
         }
       }
     }
@@ -150,7 +155,11 @@ export async function runExercise(
   stylesCode?: string,
   learnerFiles?: LearnerFiles
 ): Promise<RunResult> {
-  const capturedConsole = makeCapturedConsole("tests", onConsole);
+  // Module-scoped pointer to the currently-running test's display name, set/cleared
+  // by `walk` in `runTree` below. Console logs (including ones fired from top-level
+  // module code, before any test runs) get stamped with its current value.
+  const currentTest: { name?: string } = {};
+  const capturedConsole = makeCapturedConsole("tests", onConsole, () => currentTest.name);
   // Drop learner CSS from the previous run so only currently-imported stylesheets
   // affect the graded DOM (matches the live preview).
   clearLearnerCss();
@@ -198,7 +207,7 @@ export async function runExercise(
   }
 
   try {
-    return await runTree(harness.root);
+    return await runTree(harness.root, currentTest);
   } finally {
     vi.__restore(); // always restore real timers, even if a test forgot
   }

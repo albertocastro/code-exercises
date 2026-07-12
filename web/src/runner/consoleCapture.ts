@@ -5,6 +5,12 @@ export interface ConsoleEntry {
   level: ConsoleLevel;
   source: "tests" | "preview" | "run";
   args: string[];
+  // Name of the test whose body was executing when this log fired (leaf test
+  // name, matching `TestRow.name`). Undefined for non-test sources (preview/run)
+  // and for logs that fire outside any test (e.g. top-level module code, or the
+  // Java runner, which only reports a run-level console array with no per-test
+  // attribution).
+  test?: string;
 }
 
 export type ConsoleSink = (entry: Omit<ConsoleEntry, "id">) => void;
@@ -47,13 +53,17 @@ function formatArg(arg: unknown): string {
   }
 }
 
-export function makeCapturedConsole(source: ConsoleEntry["source"], sink?: ConsoleSink): Console {
+export function makeCapturedConsole(
+  source: ConsoleEntry["source"],
+  sink?: ConsoleSink,
+  getCurrentTest?: () => string | undefined
+): Console {
   const captured = {} as Console;
   const base = globalThis.console;
 
   (["log", "info", "warn", "error"] as const).forEach((level) => {
     captured[level] = (...args: unknown[]) => {
-      sink?.({ source, level, args: args.map(formatArg) });
+      sink?.({ source, level, args: args.map(formatArg), test: getCurrentTest?.() });
       base[level]?.(...args);
     };
   });

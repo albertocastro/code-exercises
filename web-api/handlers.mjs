@@ -355,6 +355,10 @@ export async function runJavaTests(payload) {
       return {
         ok: true,
         result: JSON.parse(jsonLine),
+        // Flat, run-level stdout capture — JUnit doesn't give us a hook to tag each
+        // line with the test that printed it, so per-test console attribution (the
+        // `test` field on ConsoleEntry, see web/src/runner/consoleCapture.ts) isn't
+        // available for Java. The frontend renders these lines with no test label.
         console: output.split("\n").slice(0, -1).filter(Boolean),
       };
     } catch (e) {

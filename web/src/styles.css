@@ -805,7 +805,7 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 .console-empty { color: var(--muted); padding: 12px 14px; }
 .console-row {
   display: grid;
-  grid-template-columns: 54px 42px minmax(0, 1fr);
+  grid-template-columns: minmax(54px, auto) 42px minmax(0, 1fr);
   gap: 8px;
   padding: 5px 14px;
   border-bottom: 1px solid rgba(255,255,255,0.04);
@@ -815,6 +815,10 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   color: var(--muted);
   font-family: ui-monospace, monospace;
   font-size: 11px;
+}
+.console-test {
+  opacity: 0.75;
+  white-space: nowrap;
 }
 .console-row.warn .console-level { color: #e2c08d; }
 .console-row.error .console-level { color: #f48771; }
