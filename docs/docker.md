@@ -37,6 +37,17 @@ zombies), and the non-root uid (a break-out lands as an unprivileged user, not
 root). The image bakes in the JDK, so `javac`/`java` resolve from `JAVA_HOME`
 with no external dependency.
 
+**Concurrency is capped too.** Each `java`/`javac` launch is its own JVM
+(100–300 MiB) and each `codex exec` is its own process; none of the guardrails
+above stop N *simultaneous* submissions from each spinning one up at once. A
+`ConcurrencyLimiter` in `web-api/handlers.mjs` bounds this: at most
+`JAVA_MAX_CONCURRENCY` (default 2) Java launches and `EXERCISE_AGENT_MAX_CONCURRENCY`
+(default 2) codex launches run at a time; the next `JAVA_MAX_QUEUE` /
+`EXERCISE_AGENT_MAX_QUEUE` (default 8 each) requests wait their turn, and
+anything past that gets an immediate `429` ("at capacity") instead of piling
+up. This is what keeps a burst of simultaneous submissions from spiking past
+the container `mem_limit` set in `deploy/docker-compose.prod.yml`.
+
 ## What's in the image
 
 - Node runtime, running as **non-root uid/gid 1001** (`appuser`).

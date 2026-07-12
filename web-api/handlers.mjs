@@ -86,6 +86,82 @@ function makeJavaWorkdir(prefix) {
 }
 
 // ---------------------------------------------------------------------------
+// Concurrency limiter — bounds simultaneous heavy child-process work
+// ---------------------------------------------------------------------------
+//
+// Each `java` launch is a fresh JVM (100-300 MiB per the Dockerfile/compose
+// comments) and each `codex exec` is its own process too. Nothing previously
+// capped how many of either could run AT ONCE: N simultaneous submissions
+// used to mean N simultaneous JVMs/agents, which is exactly the spike the
+// container `mem_limit` in deploy/docker-compose.prod.yml is there to guard
+// against (a cgroup OOM-kill of this container beats locking the whole
+// shared box, but it is still better to not hit it in normal use).
+//
+// ConcurrencyLimiter is a tiny FIFO semaphore: at most `maxConcurrent` calls
+// to `run(fn)` execute at once; the next `maxQueue` callers wait their turn;
+// anyone past that gets a clear "busy" error immediately instead of piling up
+// unboundedly. Two independent pools are created below — Java and the codex
+// agent — sized and tuned separately via env vars, with conservative
+// defaults, so a burst of one kind of work doesn't starve the other.
+export class ConcurrencyLimiter {
+  constructor(name, maxConcurrent, maxQueue) {
+    this.name = name;
+    this.maxConcurrent = maxConcurrent;
+    this.maxQueue = maxQueue;
+    this.active = 0;
+    this.queue = [];
+  }
+
+  get queued() {
+    return this.queue.length;
+  }
+
+  async run(fn) {
+    if (this.active >= this.maxConcurrent) {
+      if (this.queue.length >= this.maxQueue) {
+        const err = new Error(
+          `${this.name} is at capacity (${this.maxConcurrent} running, ${this.maxQueue} queued). Try again shortly.`
+        );
+        err.busy = true;
+        throw err;
+      }
+      await new Promise((resolve) => this.queue.push(resolve));
+    }
+    this.active++;
+    try {
+      return await fn();
+    } finally {
+      this.active--;
+      const next = this.queue.shift();
+      if (next) next();
+    }
+  }
+}
+
+function positiveIntEnv(name, fallback) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+// Max simultaneous javac/java launches (compile, test-run, and Main.java
+// stream each count as one). Default 2: conservative for a 1g container
+// ceiling with a 256m-per-JVM heap cap plus Node/codex overhead.
+const JAVA_MAX_CONCURRENCY = positiveIntEnv("JAVA_MAX_CONCURRENCY", 2);
+// Requests beyond the concurrency cap wait in this queue before being told
+// the runner is busy; keeps a burst of clicks from spawning unboundedly.
+const JAVA_MAX_QUEUE = positiveIntEnv("JAVA_MAX_QUEUE", 8);
+const javaLimiter = new ConcurrencyLimiter("Java runner", JAVA_MAX_CONCURRENCY, JAVA_MAX_QUEUE);
+
+// Max simultaneous `codex exec` (or EXERCISE_AGENT_CMD) launches across
+// review/score/pr-review/pixel-perfect. Named to match the existing
+// EXERCISE_AGENT_* env vars (CMD/MODEL/EFFORT) below.
+const AGENT_MAX_CONCURRENCY = positiveIntEnv("EXERCISE_AGENT_MAX_CONCURRENCY", 2);
+const AGENT_MAX_QUEUE = positiveIntEnv("EXERCISE_AGENT_MAX_QUEUE", 8);
+const agentLimiter = new ConcurrencyLimiter("Review agent", AGENT_MAX_CONCURRENCY, AGENT_MAX_QUEUE);
+
+// ---------------------------------------------------------------------------
 // Small process helpers
 // ---------------------------------------------------------------------------
 
@@ -185,30 +261,36 @@ export async function compileJava(payload) {
   const files = (payload.files ?? []).filter((f) => !!f?.name && typeof f.content === "string");
   if (!files.length) return { ok: true, diagnostics: [] };
 
-  const dir = makeJavaWorkdir("exercise-java-compile-");
-  try {
-    const javaNames = [];
-    for (const f of files) {
-      const base = path.basename(f.name);
-      writeFileSync(path.join(dir, base), f.content);
-      if (base.endsWith(".java")) javaNames.push(base);
-    }
-    if (!javaNames.length) return { ok: true, diagnostics: [] };
+  // Acquire a Java concurrency slot BEFORE touching the filesystem — a busy
+  // rejection here throws out of the limiter, not from inside the try/finally
+  // below, so it propagates to the route handler untouched (no scratch dir was
+  // ever created for a request that never ran).
+  return javaLimiter.run(async () => {
+    const dir = makeJavaWorkdir("exercise-java-compile-");
+    try {
+      const javaNames = [];
+      for (const f of files) {
+        const base = path.basename(f.name);
+        writeFileSync(path.join(dir, base), f.content);
+        if (base.endsWith(".java")) javaNames.push(base);
+      }
+      if (!javaNames.length) return { ok: true, diagnostics: [] };
 
-    // Compile all .java files in the isolated workdir (cwd = dir), so class
-    // files land beside the sources and nothing escapes the scratch dir.
-    const compile = await runCommand(
-      javaBin("javac"),
-      ["-encoding", "UTF-8", "-Xlint:none", ...javaNames],
-      dir,
-      15_000
-    );
-    return { ok: true, diagnostics: parseJavacDiagnostics(compile.stderr || compile.stdout) };
-  } catch (e) {
-    return { ok: false, error: javaErrorMessage(e), diagnostics: [] };
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+      // Compile all .java files in the isolated workdir (cwd = dir), so class
+      // files land beside the sources and nothing escapes the scratch dir.
+      const compile = await runCommand(
+        javaBin("javac"),
+        ["-encoding", "UTF-8", "-Xlint:none", ...javaNames],
+        dir,
+        15_000
+      );
+      return { ok: true, diagnostics: parseJavacDiagnostics(compile.stderr || compile.stdout) };
+    } catch (e) {
+      return { ok: false, error: javaErrorMessage(e), diagnostics: [] };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -216,69 +298,71 @@ export async function compileJava(payload) {
 // ---------------------------------------------------------------------------
 
 export async function runJavaTests(payload) {
-  const dir = makeJavaWorkdir("exercise-java-");
-  const solutionFileName = payload.solutionFileName || "Solution.java";
-  const testFileName = payload.testFileName || "SolutionTest.java";
-  const testClass = testFileName.replace(/\.java$/, "");
-  try {
-    writeFileSync(path.join(dir, solutionFileName), payload.solutionCode ?? "");
-    writeFileSync(path.join(dir, testFileName), payload.testCode ?? "");
+  return javaLimiter.run(async () => {
+    const dir = makeJavaWorkdir("exercise-java-");
+    const solutionFileName = payload.solutionFileName || "Solution.java";
+    const testFileName = payload.testFileName || "SolutionTest.java";
+    const testClass = testFileName.replace(/\.java$/, "");
+    try {
+      writeFileSync(path.join(dir, solutionFileName), payload.solutionCode ?? "");
+      writeFileSync(path.join(dir, testFileName), payload.testCode ?? "");
 
-    const compile = await runCommand(
-      javaBin("javac"),
-      ["-encoding", "UTF-8", solutionFileName, testFileName],
-      dir,
-      10_000
-    );
-    if (compile.code !== 0) {
+      const compile = await runCommand(
+        javaBin("javac"),
+        ["-encoding", "UTF-8", solutionFileName, testFileName],
+        dir,
+        10_000
+      );
+      if (compile.code !== 0) {
+        return {
+          ok: true,
+          result: {
+            rows: [],
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+            compileError: `javac — ${(compile.stderr || compile.stdout).trim() || "Compilation failed."}`,
+          },
+        };
+      }
+
+      // Run the test class in-process: cwd = dir puts the compiled classes on the
+      // default classpath; hardening flags cap heap and keep it headless.
+      const run = await runCommand(
+        javaBin("java"),
+        [...javaHardeningFlags(), testClass, String(payload.level ?? 1)],
+        dir,
+        12_000
+      );
+      const output = run.stdout.trim();
+      const jsonLine = output
+        .split("\n")
+        .reverse()
+        .find((line) => line.trim().startsWith("{"));
+      if (run.code !== 0 || !jsonLine) {
+        return {
+          ok: true,
+          result: {
+            rows: [],
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+            compileError: `java — ${(run.stderr || run.stdout).trim() || "Test process failed."}`,
+          },
+        };
+      }
+
       return {
         ok: true,
-        result: {
-          rows: [],
-          passed: 0,
-          failed: 0,
-          skipped: 0,
-          compileError: `javac — ${(compile.stderr || compile.stdout).trim() || "Compilation failed."}`,
-        },
+        result: JSON.parse(jsonLine),
+        console: output.split("\n").slice(0, -1).filter(Boolean),
       };
+    } catch (e) {
+      return { ok: false, error: javaErrorMessage(e) };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
-
-    // Run the test class in-process: cwd = dir puts the compiled classes on the
-    // default classpath; hardening flags cap heap and keep it headless.
-    const run = await runCommand(
-      javaBin("java"),
-      [...javaHardeningFlags(), testClass, String(payload.level ?? 1)],
-      dir,
-      12_000
-    );
-    const output = run.stdout.trim();
-    const jsonLine = output
-      .split("\n")
-      .reverse()
-      .find((line) => line.trim().startsWith("{"));
-    if (run.code !== 0 || !jsonLine) {
-      return {
-        ok: true,
-        result: {
-          rows: [],
-          passed: 0,
-          failed: 0,
-          skipped: 0,
-          compileError: `java — ${(run.stderr || run.stdout).trim() || "Test process failed."}`,
-        },
-      };
-    }
-
-    return {
-      ok: true,
-      result: JSON.parse(jsonLine),
-      console: output.split("\n").slice(0, -1).filter(Boolean),
-    };
-  } catch (e) {
-    return { ok: false, error: javaErrorMessage(e) };
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +370,6 @@ export async function runJavaTests(payload) {
 // ---------------------------------------------------------------------------
 
 export async function streamJavaMain(payload, res) {
-  const dir = makeJavaWorkdir("exercise-java-main-");
   let activeProc = null;
   let closed = false;
   const solutionFileName = payload.solutionFileName || "Solution.java";
@@ -308,71 +391,81 @@ export async function streamJavaMain(payload, res) {
     }
   };
 
-  const cleanup = async () => {
-    killActive();
-    rmSync(dir, { recursive: true, force: true });
-  };
-
+  // Registered before the concurrency-limiter acquire so a client that
+  // disconnects while queued still flips `closed` — the run body below checks
+  // it before spawning anything.
   res.on("close", () => {
     closed = true;
     killActive();
   });
 
-  try {
-    writeFileSync(path.join(dir, solutionFileName), payload.solutionCode ?? "");
-    writeFileSync(path.join(dir, mainFileName), payload.mainCode ?? "");
+  // A "busy" rejection (queue full) propagates out of `run` untouched, before
+  // any scratch dir or process exists; the route handler maps it to a 429.
+  await javaLimiter.run(async () => {
+    if (closed) return; // client already gone while this run was queued
 
-    const compile = await runCommand(
-      javaBin("javac"),
-      ["-encoding", "UTF-8", solutionFileName, mainFileName],
-      dir,
-      10_000
-    );
-    if (compile.code !== 0) {
-      writeJsonLine(res, { type: "stderr", text: (compile.stderr || compile.stdout).trim() || "Compilation failed." });
-      return;
-    }
+    const dir = makeJavaWorkdir("exercise-java-main-");
+    const cleanup = async () => {
+      killActive();
+      rmSync(dir, { recursive: true, force: true });
+    };
 
-    await new Promise((resolve) => {
-      const proc = spawn(
-        javaBin("java"),
-        [...javaHardeningFlags(), mainClass],
-        { cwd: dir, stdio: ["ignore", "pipe", "pipe"], detached: true }
+    try {
+      writeFileSync(path.join(dir, solutionFileName), payload.solutionCode ?? "");
+      writeFileSync(path.join(dir, mainFileName), payload.mainCode ?? "");
+
+      const compile = await runCommand(
+        javaBin("javac"),
+        ["-encoding", "UTF-8", solutionFileName, mainFileName],
+        dir,
+        10_000
       );
-      activeProc = proc;
-      const timer = setTimeout(() => {
-        killActive();
-        if (!closed) writeJsonLine(res, { type: "stderr", text: "Main.java timed out after 30s." });
-      }, 30_000);
+      if (compile.code !== 0) {
+        writeJsonLine(res, { type: "stderr", text: (compile.stderr || compile.stdout).trim() || "Compilation failed." });
+        return;
+      }
 
-      proc.stdout.on("data", (data) => {
-        for (const line of data.toString().split(/\r?\n/)) {
-          if (line && !closed) writeJsonLine(res, { type: "stdout", text: line });
-        }
+      await new Promise((resolve) => {
+        const proc = spawn(
+          javaBin("java"),
+          [...javaHardeningFlags(), mainClass],
+          { cwd: dir, stdio: ["ignore", "pipe", "pipe"], detached: true }
+        );
+        activeProc = proc;
+        const timer = setTimeout(() => {
+          killActive();
+          if (!closed) writeJsonLine(res, { type: "stderr", text: "Main.java timed out after 30s." });
+        }, 30_000);
+
+        proc.stdout.on("data", (data) => {
+          for (const line of data.toString().split(/\r?\n/)) {
+            if (line && !closed) writeJsonLine(res, { type: "stdout", text: line });
+          }
+        });
+        proc.stderr.on("data", (data) => {
+          for (const line of data.toString().split(/\r?\n/)) {
+            if (line && !closed) writeJsonLine(res, { type: "stderr", text: line });
+          }
+        });
+        proc.on("error", (e) => {
+          clearTimeout(timer);
+          if (!closed) writeJsonLine(res, { type: "error", error: e.message });
+          resolve();
+        });
+        proc.on("close", (code) => {
+          clearTimeout(timer);
+          activeProc = null;
+          if (!closed && code && code !== 0) writeJsonLine(res, { type: "stderr", text: `Main exited with code ${code}.` });
+          resolve();
+        });
       });
-      proc.stderr.on("data", (data) => {
-        for (const line of data.toString().split(/\r?\n/)) {
-          if (line && !closed) writeJsonLine(res, { type: "stderr", text: line });
-        }
-      });
-      proc.on("error", (e) => {
-        clearTimeout(timer);
-        if (!closed) writeJsonLine(res, { type: "error", error: e.message });
-        resolve();
-      });
-      proc.on("close", (code) => {
-        clearTimeout(timer);
-        activeProc = null;
-        if (!closed && code && code !== 0) writeJsonLine(res, { type: "stderr", text: `Main exited with code ${code}.` });
-        resolve();
-      });
-    });
-  } catch (e) {
-    writeJsonLine(res, { type: "error", error: javaErrorMessage(e) });
-  } finally {
-    await cleanup();
-    if (!closed) res.end();
-  }
+    } catch (e) {
+      writeJsonLine(res, { type: "error", error: javaErrorMessage(e) });
+    } finally {
+      await cleanup();
+      if (!closed) res.end();
+    }
+  });
 }
 
 // Normalize errors from the in-process Java runner. A missing `javac`/`java`
@@ -603,104 +696,109 @@ function normalizeScoreOutput(output) {
 // vision agent. `screenshotBase64` (optional) is a raw base64 PNG with no data-url
 // prefix; when present AND we're using the DEFAULT codex command path, it's written
 // to <dir>/screenshot.png and passed to codex as an image input via `-i`.
+// Acquires an agent concurrency slot before doing anything else — a "busy"
+// rejection (queue full) throws straight out of `agentLimiter.run`, before any
+// scratch dir or `codex` process exists.
 function runAgent(p, ext, prompt, outputFile, screenshotBase64) {
-  const dir = mkdtempSync(path.join(tmpdir(), "exercise-review-"));
-  const outputPath = path.join(dir, outputFile);
-  writeFileSync(path.join(dir, `solution.${ext}`), p.solution ?? "");
-  writeFileSync(path.join(dir, "README.md"), p.readme ?? "");
-  if (p.perfSpec?.trim()) writeFileSync(path.join(dir, "perf.ts"), p.perfSpec);
+  return agentLimiter.run(() => {
+    const dir = mkdtempSync(path.join(tmpdir(), "exercise-review-"));
+    const outputPath = path.join(dir, outputFile);
+    writeFileSync(path.join(dir, `solution.${ext}`), p.solution ?? "");
+    writeFileSync(path.join(dir, "README.md"), p.readme ?? "");
+    if (p.perfSpec?.trim()) writeFileSync(path.join(dir, "perf.ts"), p.perfSpec);
 
-  const configuredCmd = process.env.EXERCISE_AGENT_CMD;
-  // Provider selector. Precedence: EXERCISE_AGENT_CMD (verbatim override) wins;
-  // otherwise EXERCISE_AGENT_PROVIDER picks "claude" (Claude Code CLI) or the
-  // default "codex". Codex stays the default so existing deploys are unchanged.
-  const provider = (process.env.EXERCISE_AGENT_PROVIDER || "codex").toLowerCase();
-  const useClaude = !configuredCmd && provider === "claude";
-  // Codex default model is "gpt-5.4-mini"; the claude path needs a Claude model id.
-  // Sonnet is a good quality/latency fit for these JSON review tasks.
-  const model = process.env.EXERCISE_AGENT_MODEL || (useClaude ? "claude-sonnet-5" : "gpt-5.4-mini");
-  const effort = process.env.EXERCISE_AGENT_EFFORT || "low";
+    const configuredCmd = process.env.EXERCISE_AGENT_CMD;
+    // Provider selector. Precedence: EXERCISE_AGENT_CMD (verbatim override) wins;
+    // otherwise EXERCISE_AGENT_PROVIDER picks "claude" (Claude Code CLI) or the
+    // default "codex". Codex stays the default so existing deploys are unchanged.
+    const provider = (process.env.EXERCISE_AGENT_PROVIDER || "codex").toLowerCase();
+    const useClaude = !configuredCmd && provider === "claude";
+    // Codex default model is "gpt-5.4-mini"; the claude path needs a Claude model id.
+    // Sonnet is a good quality/latency fit for these JSON review tasks.
+    const model = process.env.EXERCISE_AGENT_MODEL || (useClaude ? "claude-sonnet-5" : "gpt-5.4-mini");
+    const effort = process.env.EXERCISE_AGENT_EFFORT || "low";
 
-  // Only the DEFAULT codex path supports the `-i <image>` flag. A custom
-  // EXERCISE_AGENT_CMD (or the claude path) may not, so we run those text-only
-  // and ignore any screenshot.
-  let imageArg = "";
-  if (screenshotBase64 && !configuredCmd && !useClaude) {
-    const imgPath = path.join(dir, "screenshot.png");
-    writeFileSync(imgPath, Buffer.from(screenshotBase64, "base64"));
-    // CRITICAL: the `--` after `-i <path>` terminates codex's variadic `-i` so it
-    // doesn't swallow the trailing `-` stdin marker. Without it, codex fails with
-    // "No prompt provided via stdin".
-    imageArg = `-i ${JSON.stringify(imgPath)} -- `;
-  }
+    // Only the DEFAULT codex path supports the `-i <image>` flag. A custom
+    // EXERCISE_AGENT_CMD (or the claude path) may not, so we run those text-only
+    // and ignore any screenshot.
+    let imageArg = "";
+    if (screenshotBase64 && !configuredCmd && !useClaude) {
+      const imgPath = path.join(dir, "screenshot.png");
+      writeFileSync(imgPath, Buffer.from(screenshotBase64, "base64"));
+      // CRITICAL: the `--` after `-i <path>` terminates codex's variadic `-i` so it
+      // doesn't swallow the trailing `-` stdin marker. Without it, codex fails with
+      // "No prompt provided via stdin".
+      imageArg = `-i ${JSON.stringify(imgPath)} -- `;
+    }
 
-  let cmd;
-  if (configuredCmd) {
-    cmd = `${configuredCmd} -`;
-  } else if (useClaude) {
-    // Claude Code CLI in non-interactive print mode. The prompt is written to the
-    // child's stdin (same pattern as codex — no large prompt on argv). Flags (see
-    // `claude --help`):
-    //   -p / --print          headless: print the answer and exit.
-    //   --output-format text  stdout is the raw model answer; the normalizers scan
-    //                         stdout for the {...} JSON block, so no --output-last-message
-    //                         is needed here (outputPath simply won't exist → stdout fallback).
-    //   --model <model>       Claude model id.
-    //   --allowedTools ""     read-only review: grant no tools so claude doesn't act.
-    // NOTE: the `-i <image>` flag is codex-specific. claude print mode has no clean
-    // way to accept an image, so any screenshot degrades to text-only (like the
-    // EXERCISE_AGENT_CMD path). The temp dir still holds solution/README as on-disk context.
-    cmd = `claude -p --output-format text --model ${JSON.stringify(model)} --allowedTools ""`;
-  } else {
-    cmd = `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --model ${JSON.stringify(
-      model
-    )} -c ${JSON.stringify(`model_reasoning_effort="${effort}"`)} --output-last-message ${JSON.stringify(
-      outputPath
-    )} ${imageArg}-`;
-  }
+    let cmd;
+    if (configuredCmd) {
+      cmd = `${configuredCmd} -`;
+    } else if (useClaude) {
+      // Claude Code CLI in non-interactive print mode. The prompt is written to the
+      // child's stdin (same pattern as codex — no large prompt on argv). Flags (see
+      // `claude --help`):
+      //   -p / --print          headless: print the answer and exit.
+      //   --output-format text  stdout is the raw model answer; the normalizers scan
+      //                         stdout for the {...} JSON block, so no --output-last-message
+      //                         is needed here (outputPath simply won't exist → stdout fallback).
+      //   --model <model>       Claude model id.
+      //   --allowedTools ""     read-only review: grant no tools so claude doesn't act.
+      // NOTE: the `-i <image>` flag is codex-specific. claude print mode has no clean
+      // way to accept an image, so any screenshot degrades to text-only (like the
+      // EXERCISE_AGENT_CMD path). The temp dir still holds solution/README as on-disk context.
+      cmd = `claude -p --output-format text --model ${JSON.stringify(model)} --allowedTools ""`;
+    } else {
+      cmd = `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --model ${JSON.stringify(
+        model
+      )} -c ${JSON.stringify(`model_reasoning_effort="${effort}"`)} --output-last-message ${JSON.stringify(
+        outputPath
+      )} ${imageArg}-`;
+    }
 
-  return new Promise((resolve, reject) => {
-    const proc = spawn("bash", ["-lc", cmd], { cwd: dir, stdio: ["pipe", "pipe", "pipe"] });
-    let out = "";
-    let err = "";
-    proc.stdin.end(prompt);
-    proc.stdout.on("data", (d) => (out += d));
-    proc.stderr.on("data", (d) => (err += d));
-    const timer = setTimeout(() => {
-      proc.kill();
-      reject(new Error("The review agent timed out (120s)."));
-    }, 120_000);
-    proc.on("error", (e) => {
-      clearTimeout(timer);
-      const installHint = useClaude ? "Install claude" : "Install codex";
-      reject(new Error(`Could not run the review agent. ${installHint} or set EXERCISE_AGENT_CMD. (${e.message})`));
-    });
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      // The --output-last-message file is the source of truth for the agent's
-      // final message. Prefer it whenever codex wrote it.
-      const finalOutput = existsSync(outputPath) ? readFileSync(outputPath, "utf8").trim() : "";
-      if (finalOutput) {
-        resolve(finalOutput);
-        return;
-      }
-      // Empty output file: codex produced no final message (auth/quota failure,
-      // or a version whose `exec` only dumps a transcript). We may fall back to
-      // stdout ONLY when it's a genuine answer — never when it's codex's banner +
-      // echoed prompt, whose embedded JSON schema example would be mis-parsed as a
-      // real (but bogus) score. Fail loudly instead so the UI shows "unavailable"
-      // rather than a fabricated result.
-      const stdout = out.trim();
-      if (stdout && !looksLikeCodexTranscript(stdout)) {
-        resolve(stdout);
-        return;
-      }
-      reject(
-        new Error(
-          err.trim() ||
-            `Agent produced no final message (empty ${outputFile}); refusing to parse the codex transcript on stdout. Exit code ${code}.`
-        )
-      );
+    return new Promise((resolve, reject) => {
+      const proc = spawn("bash", ["-lc", cmd], { cwd: dir, stdio: ["pipe", "pipe", "pipe"] });
+      let out = "";
+      let err = "";
+      proc.stdin.end(prompt);
+      proc.stdout.on("data", (d) => (out += d));
+      proc.stderr.on("data", (d) => (err += d));
+      const timer = setTimeout(() => {
+        proc.kill();
+        reject(new Error("The review agent timed out (120s)."));
+      }, 120_000);
+      proc.on("error", (e) => {
+        clearTimeout(timer);
+        const installHint = useClaude ? "Install claude" : "Install codex";
+        reject(new Error(`Could not run the review agent. ${installHint} or set EXERCISE_AGENT_CMD. (${e.message})`));
+      });
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        // The --output-last-message file is the source of truth for the agent's
+        // final message. Prefer it whenever codex wrote it.
+        const finalOutput = existsSync(outputPath) ? readFileSync(outputPath, "utf8").trim() : "";
+        if (finalOutput) {
+          resolve(finalOutput);
+          return;
+        }
+        // Empty output file: codex produced no final message (auth/quota failure,
+        // or a version whose `exec` only dumps a transcript). We may fall back to
+        // stdout ONLY when it's a genuine answer — never when it's codex's banner +
+        // echoed prompt, whose embedded JSON schema example would be mis-parsed as a
+        // real (but bogus) score. Fail loudly instead so the UI shows "unavailable"
+        // rather than a fabricated result.
+        const stdout = out.trim();
+        if (stdout && !looksLikeCodexTranscript(stdout)) {
+          resolve(stdout);
+          return;
+        }
+        reject(
+          new Error(
+            err.trim() ||
+              `Agent produced no final message (empty ${outputFile}); refusing to parse the codex transcript on stdout. Exit code ${code}.`
+          )
+        );
+      });
     });
   });
 }
@@ -946,6 +1044,16 @@ export function registerApiRoutes(use) {
   // grow unbounded — the body accumulator is otherwise uncapped.
   const MAX_AGENT_BODY_BYTES = 5 * 1024 * 1024;
 
+  // Both the Java runner and the agent runner reject with `err.busy = true`
+  // when their ConcurrencyLimiter's queue is full (see the limiter section
+  // above). Surface that distinctly as 429 so the client can show "busy, try
+  // again" instead of a generic failure.
+  const respondBusyOr = (res, e, fallbackStatus) => {
+    res.statusCode = e?.busy ? 429 : fallbackStatus;
+    res.setHeader("Content-Type", "application/json");
+    return e.message;
+  };
+
   const agentHandler = (kind) => (req, res) => {
     if (req.method !== "POST") {
       res.statusCode = 405;
@@ -987,9 +1095,8 @@ export function registerApiRoutes(use) {
           res.end(JSON.stringify({ ok: true, output }));
         })
         .catch((e) => {
-          res.statusCode = 500;
-          res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ ok: false, error: e.message }));
+          const error = respondBusyOr(res, e, 500);
+          res.end(JSON.stringify({ ok: false, error }));
         });
     });
   };
@@ -1010,9 +1117,8 @@ export function registerApiRoutes(use) {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify(result));
     } catch (e) {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ ok: false, error: e.message }));
+      const error = respondBusyOr(res, e, 400);
+      res.end(JSON.stringify({ ok: false, error }));
     }
   });
 
@@ -1027,9 +1133,8 @@ export function registerApiRoutes(use) {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify(result));
     } catch (e) {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ ok: false, error: e.message, diagnostics: [] }));
+      const error = respondBusyOr(res, e, 400);
+      res.end(JSON.stringify({ ok: false, error, diagnostics: [] }));
     }
   });
 
@@ -1044,6 +1149,10 @@ export function registerApiRoutes(use) {
       const payload = await readJsonBody(req);
       await streamJavaMain(payload, res);
     } catch (e) {
+      // NDJSON stream, not JSON — a busy rejection lands here before any line
+      // has been written (streamJavaMain acquires the limiter before writing
+      // anything), so the status code can still be set.
+      if (e?.busy) res.statusCode = 429;
       writeJsonLine(res, { type: "error", error: e.message });
       res.end();
     }
