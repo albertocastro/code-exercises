@@ -53,6 +53,9 @@ export const CATALOG: CategoryMeta[] = [
       { id: "exercise_14", name: "In-Memory Database", levels: 4, difficulty: "hard", topic: "Records, prefix scans, per-field TTL, and backup/restore snapshots" },
       { id: "exercise_15", name: "Cloud File Storage", levels: 4, difficulty: "hard", topic: "Files, top-N by size, per-user capacity & merges, and time-based TTL" },
       { id: "exercise_16", name: "Concurrency Coordinator", levels: 4, difficulty: "hard", topic: "Java concurrency: token buckets, time-based refill, and blocking admission slots" },
+      { id: "exercise_17", name: "Deadlock-Free Bank", levels: 4, difficulty: "hard", topic: "Java concurrency: atomic account ops, deadlock-free transfer via lock ordering, keyed guarded waits, and consistent snapshots" },
+      { id: "exercise_18", name: "Bounded Async Crawler", levels: 4, difficulty: "medium", topic: "Async concurrency pool: bounded parallelism, input-order results, and fail-fast vs settle semantics" },
+      { id: "exercise_19", name: "Parallel Aggregator", levels: 4, difficulty: "medium", topic: "Java parallelism: partitioning CPU work across threads, shared-accumulator reduction, and cooperative cancellation" },
     ],
   },
   {
