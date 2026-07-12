@@ -92,6 +92,20 @@ not commit this):
 
 Whichever you choose, auth stays out of the image.
 
+### Choosing the AI provider (codex vs claude)
+
+The review/score/pr-review/pixel-perfect features run through a configurable
+provider, selected by `EXERCISE_AGENT_PROVIDER`:
+
+- unset or `codex` (default) — uses the bundled `codex` CLI, as above.
+- `claude` — uses the [Claude Code CLI](https://claude.com/claude-code) instead.
+  Requires the `claude` CLI installed and authenticated **in the container**
+  (same class of manual, out-of-image credential as codex — log in once and
+  persist it via a mounted home dir). Optionally set `EXERCISE_AGENT_MODEL` to a
+  Claude model id (defaults to `claude-sonnet-5`).
+
+`EXERCISE_AGENT_CMD` still overrides both (a verbatim, text-only command).
+
 ## Verification
 
 All of these must pass:

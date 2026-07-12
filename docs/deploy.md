@@ -164,6 +164,11 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml exec code
 Follow the CLI's printed URL / device-code flow. (Codex writes to
 `/var/lib/code-exercises/codex`.)
 
+The AI provider is selectable via `EXERCISE_AGENT_PROVIDER` (`codex` by
+default; set to `claude` to use the Claude Code CLI). The `claude` provider
+requires the `claude` CLI installed and authenticated in the container — the
+same manual, persist-across-deploys credential step as codex above.
+
 ### 5. Verify
 
 ```bash

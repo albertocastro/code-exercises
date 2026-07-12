@@ -589,13 +589,21 @@ function runAgent(p, ext, prompt, outputFile, screenshotBase64) {
   if (p.perfSpec?.trim()) writeFileSync(path.join(dir, "perf.ts"), p.perfSpec);
 
   const configuredCmd = process.env.EXERCISE_AGENT_CMD;
-  const model = process.env.EXERCISE_AGENT_MODEL || "gpt-5.4-mini";
+  // Provider selector. Precedence: EXERCISE_AGENT_CMD (verbatim override) wins;
+  // otherwise EXERCISE_AGENT_PROVIDER picks "claude" (Claude Code CLI) or the
+  // default "codex". Codex stays the default so existing deploys are unchanged.
+  const provider = (process.env.EXERCISE_AGENT_PROVIDER || "codex").toLowerCase();
+  const useClaude = !configuredCmd && provider === "claude";
+  // Codex default model is "gpt-5.4-mini"; the claude path needs a Claude model id.
+  // Sonnet is a good quality/latency fit for these JSON review tasks.
+  const model = process.env.EXERCISE_AGENT_MODEL || (useClaude ? "claude-sonnet-5" : "gpt-5.4-mini");
   const effort = process.env.EXERCISE_AGENT_EFFORT || "low";
 
   // Only the DEFAULT codex path supports the `-i <image>` flag. A custom
-  // EXERCISE_AGENT_CMD may not, so we run it text-only and ignore any screenshot.
+  // EXERCISE_AGENT_CMD (or the claude path) may not, so we run those text-only
+  // and ignore any screenshot.
   let imageArg = "";
-  if (screenshotBase64 && !configuredCmd) {
+  if (screenshotBase64 && !configuredCmd && !useClaude) {
     const imgPath = path.join(dir, "screenshot.png");
     writeFileSync(imgPath, Buffer.from(screenshotBase64, "base64"));
     // CRITICAL: the `--` after `-i <path>` terminates codex's variadic `-i` so it
@@ -604,13 +612,30 @@ function runAgent(p, ext, prompt, outputFile, screenshotBase64) {
     imageArg = `-i ${JSON.stringify(imgPath)} -- `;
   }
 
-  const cmd = configuredCmd
-    ? `${configuredCmd} -`
-    : `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --model ${JSON.stringify(
-        model
-      )} -c ${JSON.stringify(`model_reasoning_effort="${effort}"`)} --output-last-message ${JSON.stringify(
-        outputPath
-      )} ${imageArg}-`;
+  let cmd;
+  if (configuredCmd) {
+    cmd = `${configuredCmd} -`;
+  } else if (useClaude) {
+    // Claude Code CLI in non-interactive print mode. The prompt is written to the
+    // child's stdin (same pattern as codex — no large prompt on argv). Flags (see
+    // `claude --help`):
+    //   -p / --print          headless: print the answer and exit.
+    //   --output-format text  stdout is the raw model answer; the normalizers scan
+    //                         stdout for the {...} JSON block, so no --output-last-message
+    //                         is needed here (outputPath simply won't exist → stdout fallback).
+    //   --model <model>       Claude model id.
+    //   --allowedTools ""     read-only review: grant no tools so claude doesn't act.
+    // NOTE: the `-i <image>` flag is codex-specific. claude print mode has no clean
+    // way to accept an image, so any screenshot degrades to text-only (like the
+    // EXERCISE_AGENT_CMD path). The temp dir still holds solution/README as on-disk context.
+    cmd = `claude -p --output-format text --model ${JSON.stringify(model)} --allowedTools ""`;
+  } else {
+    cmd = `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --model ${JSON.stringify(
+      model
+    )} -c ${JSON.stringify(`model_reasoning_effort="${effort}"`)} --output-last-message ${JSON.stringify(
+      outputPath
+    )} ${imageArg}-`;
+  }
 
   return new Promise((resolve, reject) => {
     const proc = spawn("bash", ["-lc", cmd], { cwd: dir, stdio: ["pipe", "pipe", "pipe"] });
@@ -625,7 +650,8 @@ function runAgent(p, ext, prompt, outputFile, screenshotBase64) {
     }, 120_000);
     proc.on("error", (e) => {
       clearTimeout(timer);
-      reject(new Error(`Could not run the review agent. Install codex or set EXERCISE_AGENT_CMD. (${e.message})`));
+      const installHint = useClaude ? "Install claude" : "Install codex";
+      reject(new Error(`Could not run the review agent. ${installHint} or set EXERCISE_AGENT_CMD. (${e.message})`));
     });
     proc.on("close", (code) => {
       clearTimeout(timer);

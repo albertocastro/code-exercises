@@ -527,7 +527,7 @@ export function InsightsPanel({
                     </button>
                   )}
                   <button className="run-btn" disabled={ai === "loading"} onClick={runReview}>
-                    {ai === "loading" && !messages.length ? "Running…" : messages.length ? "Restart" : "Run codex"}
+                    {ai === "loading" && !messages.length ? "Running…" : messages.length ? "Restart" : "Run review"}
                   </button>
                 </div>
               </div>
