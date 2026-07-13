@@ -88,6 +88,7 @@ function runRequest(req: RunRequest) {
       ...harness.globals,
       expect,
       vi,
+      jest: vi, // alias: some exercises are authored with jest.* instead of vi.*
       process: proc,
       console: capturedConsole,
     });
