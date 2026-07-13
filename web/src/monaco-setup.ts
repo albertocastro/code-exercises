@@ -45,7 +45,7 @@ export function installHighlighting(m: MonacoNS): Promise<void> {
       ]);
       const highlighter = await createHighlighter({
         themes: ["dark-plus"],
-        langs: ["tsx", "javascript", "json", "css"],
+        langs: ["tsx", "javascript", "json", "css", "java"],
         langAlias: { typescript: "tsx" },
       });
       shikiToMonaco(highlighter, m);
