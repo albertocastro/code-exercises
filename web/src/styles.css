@@ -550,6 +550,16 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   font-size: 11.5px;
 }
 .run-btn:hover { border-color: var(--accent-2); color: var(--accent); }
+.stop-btn {
+  background: transparent;
+  border: 1px solid var(--bad, #e5484d);
+  color: var(--bad, #e5484d);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+  font-size: 11.5px;
+}
+.stop-btn:hover { background: var(--bad, #e5484d); color: #fff; }
 .run-hint {
   opacity: 0.5;
   font-size: 10.5px;
