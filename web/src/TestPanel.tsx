@@ -25,8 +25,8 @@ export function TestPanel({
   return (
     <div className="tests">
       <div className="tests-bar">
-        <button className="run-btn" title="Re-run tests" onClick={onRun}>
-          ↻ Run
+        <button className="run-btn" title="Re-run tests (⌘/Ctrl+Enter)" onClick={onRun}>
+          ↻ Run <span className="run-hint">⌘↵</span>
         </button>
         {running && <span className="muted">running…</span>}
         {!running && result && !result.compileError && (

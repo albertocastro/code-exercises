@@ -550,6 +550,12 @@ h1 { font-size: 20px; margin: 0 0 6px; }
   font-size: 11.5px;
 }
 .run-btn:hover { border-color: var(--accent-2); color: var(--accent); }
+.run-hint {
+  opacity: 0.5;
+  font-size: 10.5px;
+  margin-left: 2px;
+  font-family: ui-monospace, monospace;
+}
 .preview-wrap { display: flex; flex-direction: column; height: 100%; }
 .preview-bar {
   padding: 6px 10px;

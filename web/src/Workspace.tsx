@@ -571,6 +571,21 @@ export function Workspace({
     return () => stopMain();
   }, []);
 
+  // Window-level fallback for Cmd/Ctrl+Enter so "run tests" also works when
+  // focus isn't inside the Monaco editor (e.g. the README panel or a button).
+  // Monaco's own editor.addCommand (see Editor.tsx) handles the in-editor
+  // case and calls preventDefault, so skip when that already fired.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (e.key !== "Enter" || !(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault();
+      setTestNonce((n) => n + 1);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     setTestsRunning(true);
@@ -1133,6 +1148,8 @@ export function Workspace({
           onChange={editActiveFile}
           readOnly={af.ro}
           reveal={editorReveal?.path === af.path ? editorReveal : undefined}
+          onRunTests={() => setTestNonce((n) => n + 1)}
+          onFormat={() => void formatActiveFile()}
           javaSiblings={
             language === "java"
               ? [

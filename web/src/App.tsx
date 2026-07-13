@@ -15,6 +15,9 @@ type View =
   | { kind: "exercises"; categoryId: string }
   | { kind: "workspace"; categoryId: string; exerciseId: string; level: number };
 
+// Mirrors web/index.html's <title>, the tab's default before any view sets it.
+const DEFAULT_TITLE = "code-exercises — Web IDE";
+
 function parseStandalonePreview() {
   const parts = window.location.pathname.split("/").filter(Boolean);
   if (parts[0] !== "preview" || parts.length !== 3) {
@@ -117,6 +120,34 @@ export function App() {
     const current = `${window.location.pathname}${window.location.search}`;
     if (current !== nextUrl) {
       window.history.pushState({}, "", nextUrl);
+    }
+  }, [view]);
+
+  // Reflect the current view in the browser tab, so a learner juggling
+  // several exercises in different tabs can tell them apart. Restores the
+  // page's default title (set in index.html) on the categories/home view.
+  useEffect(() => {
+    if (view.kind === "categories") {
+      document.title = DEFAULT_TITLE;
+      return;
+    }
+    if (view.kind === "insights") {
+      document.title = `Insights · code-exercises`;
+      return;
+    }
+    if (view.kind === "progress") {
+      document.title = `Progress · code-exercises`;
+      return;
+    }
+    if (view.kind === "exercises") {
+      const cat = CATALOG.find((c) => c.id === view.categoryId);
+      document.title = cat ? `${cat.name} · code-exercises` : DEFAULT_TITLE;
+      return;
+    }
+    if (view.kind === "workspace") {
+      const cat = CATALOG.find((c) => c.id === view.categoryId);
+      const ex = cat?.exercises.find((e) => e.id === view.exerciseId);
+      document.title = ex ? `${ex.name} · code-exercises` : DEFAULT_TITLE;
     }
   }, [view]);
 

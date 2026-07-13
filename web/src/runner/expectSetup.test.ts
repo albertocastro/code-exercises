@@ -55,3 +55,54 @@ describe("expectSetup toMatchObject", () => {
     expect(() => sandboxExpect({ status: "queued" }).not.toMatchObject({ status: "queued" })).toThrow();
   });
 });
+
+describe("expectSetup toEqual diff paths", () => {
+  it("points at a mismatched nested object key", () => {
+    const received = { user: { roles: ["admin", "admin"] } };
+    const wanted = { user: { roles: ["admin", "editor"] } };
+    expect(() => sandboxExpect(received).toEqual(wanted)).toThrow(
+      /differs at \.user\.roles\[1\]: "admin" vs "editor"/
+    );
+  });
+
+  it("points at a mismatched array index at the top level", () => {
+    expect(() => sandboxExpect([1, 2, 3]).toEqual([1, 9, 3])).toThrow(/differs at \[1\]: 2 vs 9/);
+  });
+
+  it("reports a type mismatch between a primitive and an object", () => {
+    expect(() => sandboxExpect({ a: 1 }).toEqual({ a: { b: 1 } })).toThrow(/differs at \.a: 1 vs \{"b":1\}/);
+  });
+
+  it("falls back to (root) when the top-level values themselves differ", () => {
+    expect(() => sandboxExpect(1).toEqual(2)).toThrow(/differs at \(root\): 1 vs 2/);
+  });
+
+  it("reports the first divergence, not later ones", () => {
+    const received = { a: 1, b: 2, c: 3 };
+    const wanted = { a: 1, b: 99, c: 100 };
+    const err = (() => {
+      try {
+        sandboxExpect(received).toEqual(wanted);
+      } catch (e) {
+        return (e as Error).message;
+      }
+    })();
+    expect(err).toContain("differs at .b: 2 vs 99");
+    expect(err).not.toContain(".c");
+  });
+
+  it("does not append a diff when values are actually equal (.not.toEqual failure)", () => {
+    const err = (() => {
+      try {
+        sandboxExpect({ a: 1 }).not.toEqual({ a: 1 });
+      } catch (e) {
+        return (e as Error).message;
+      }
+    })();
+    expect(err).not.toContain("differs at");
+  });
+
+  it("still passes for deeply equal values", () => {
+    expect(() => sandboxExpect({ a: [1, { b: 2 }] }).toEqual({ a: [1, { b: 2 }] })).not.toThrow();
+  });
+});

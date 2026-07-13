@@ -12,6 +12,27 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return ka.every((k) => deepEqual((a as never)[k], (b as never)[k]));
 }
 
+// Walks two (assumed-unequal) values in lockstep and returns the first path at
+// which they diverge, so toEqual failures can point at *where* rather than
+// dumping two full JSON blobs. Mirrors deepEqual's exact equality semantics
+// (same "leaf mismatch" condition) so the reported path is always a real cause
+// of the failure, not a false lead.
+function firstDiff(a: unknown, b: unknown, path = ""): { path: string; a: unknown; b: unknown } | null {
+  if (Object.is(a, b)) return null;
+  if (typeof a !== typeof b || !a || !b || typeof a !== "object" || Array.isArray(a) !== Array.isArray(b)) {
+    return { path: path || "(root)", a, b };
+  }
+  const ka = Object.keys(a as object);
+  const kb = Object.keys(b as object);
+  if (ka.length !== kb.length) return { path: path || "(root)", a, b };
+  for (const k of ka) {
+    const childPath = Array.isArray(a) ? `${path}[${k}]` : `${path}.${k}`;
+    const diff = firstDiff((a as never)[k], (b as never)[k], childPath);
+    if (diff) return diff;
+  }
+  return null;
+}
+
 // Subset match used by toMatchObject: `received` matches `expected` if every
 // key present in `expected` matches recursively (nested objects partial-match
 // too). Arrays are compared element-wise with the same subset semantics, but
@@ -66,7 +87,10 @@ class Assertion {
     this.check(Object.is(this.received, expected), `expected ${fmt(this.received)} to be ${fmt(expected)}`);
   }
   toEqual(expected: unknown) {
-    this.check(deepEqual(this.received, expected), `expected ${fmt(this.received)} to equal ${fmt(expected)}`);
+    const pass = deepEqual(this.received, expected);
+    const diff = pass ? null : firstDiff(this.received, expected);
+    const suffix = diff ? ` (differs at ${diff.path}: ${fmt(diff.a)} vs ${fmt(diff.b)})` : "";
+    this.check(pass, `expected ${fmt(this.received)} to equal ${fmt(expected)}${suffix}`);
   }
   toStrictEqual(expected: unknown) {
     this.toEqual(expected);

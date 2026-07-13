@@ -22,6 +22,8 @@ export function CodeEditor({
   readOnly,
   reveal,
   javaSiblings,
+  onRunTests,
+  onFormat,
 }: {
   path: string;
   value: string;
@@ -31,9 +33,24 @@ export function CodeEditor({
   // The exercise's OTHER Java files, so completion and javac see the whole
   // program (the mounted model only holds the file being edited).
   javaSiblings?: JavaSibling[];
+  // Wired to Cmd/Ctrl+Enter inside the editor. Kept in a ref (below) so the
+  // Monaco command — registered once in onMount — always calls the latest
+  // callback rather than a stale closure from the first mount.
+  onRunTests?: () => void;
+  // Wired to Shift+Alt+F inside the editor. Same ref pattern as onRunTests.
+  onFormat?: () => void;
 }) {
   const editorRef = useRef<Parameters<NonNullable<ComponentProps<typeof MonacoEditor>["onMount"]>>[0] | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
+  const onRunTestsRef = useRef(onRunTests);
+  const onFormatRef = useRef(onFormat);
+
+  useEffect(() => {
+    onRunTestsRef.current = onRunTests;
+  }, [onRunTests]);
+  useEffect(() => {
+    onFormatRef.current = onFormat;
+  }, [onFormat]);
 
   const isJava = languageForPath(path) === "java";
   const fileName = path.replace(/^.*\//, "");
@@ -126,6 +143,16 @@ export function CodeEditor({
           editor.revealLineInCenter(reveal.line);
           editor.setPosition({ lineNumber: reveal.line, column: 1 });
         }
+        // Cmd/Ctrl+Enter runs tests; Shift+Alt+F formats the active file (a
+        // no-op on read-only files — the caller's onFormat already guards
+        // that). Read from the refs so a stale onMount closure never fires an
+        // outdated callback.
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+          onRunTestsRef.current?.();
+        });
+        editor.addCommand(monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF, () => {
+          onFormatRef.current?.();
+        });
       }}
       onChange={(v) => {
         if (readOnly) return;
