@@ -35,6 +35,7 @@ import { useTimer, fmtTime } from "./useTimer";
 import { runComplexity, type ComplexityResult } from "./runner/complexity";
 import { runJavaExercise, runJavaMain } from "./runner/javaRunner";
 import { runExercise, type RunResult } from "./runner/testRunner";
+import { runExerciseInWorker, type WorkerRun } from "./runner/workerClient";
 import type { ConsoleEntry, ConsoleSink } from "./runner/consoleCapture";
 import { formatCode } from "./formatCode";
 import {
@@ -220,6 +221,9 @@ export function Workspace({
   );
   const [testResult, setTestResult] = useState<RunResult | null>(null);
   const [testsRunning, setTestsRunning] = useState(true);
+  // True only while a leetcode run is actually executing in a Web Worker (post
+  // debounce, pre result) — gates the Stop button, which can kill that worker.
+  const [canStop, setCanStop] = useState(false);
   const [testNonce, setTestNonce] = useState(0);
   const [activeFile, setActiveFile] = useState("solution");
   const [editorReveal, setEditorReveal] = useState<{ path: string; line: number; nonce: number } | null>(null);
@@ -247,6 +251,9 @@ export function Workspace({
   );
   const timer = useTimer(`${key}:L${level}`);
   const nextConsoleId = useRef(1);
+  // The in-flight worker run (leetcode path), so the Stop button and the effect
+  // cleanup can both terminate it.
+  const workerRunRef = useRef<WorkerRun | null>(null);
   const mainAbortRef = useRef<AbortController | null>(null);
   const mainRunIdRef = useRef(0);
   // Synchronous in-flight registry for quality scoring, keyed by `${scoreKey}#${solutionHash}`.
@@ -586,6 +593,13 @@ export function Workspace({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  // Plain-TS (leetcode) exercises run OFF the main thread in a Web Worker so a
+  // learner's infinite loop / runaway allocation freezes only the worker (which we
+  // terminate) rather than the whole tab. React/DOM exercises need getComputedStyle
+  // + RTL against the real DOM, so they stay on the main-thread runExercise path.
+  const useWorker =
+    categoryId === "leetcode" && language !== "java" && typeof Worker !== "undefined";
+
   useEffect(() => {
     let cancelled = false;
     setTestsRunning(true);
@@ -594,23 +608,36 @@ export function Workspace({
       const consoleSink: ConsoleSink = (entry) => {
         if (!cancelled) onConsole(entry);
       };
-      const result =
-        language === "java"
-          ? await runJavaExercise(
-              currentTestCode,
-              executionCode,
-              { solutionFileName: files.javaSolutionFileName, testFileName: files.javaTestFileName },
-              level,
-              consoleSink
-            )
-          : await runExercise(
-              currentTestCode,
-              executionCode,
-              level,
-              consoleSink,
-              hasStyles ? stylesCode : undefined,
-              learnerFiles
-            );
+      let result: RunResult;
+      if (language === "java") {
+        result = await runJavaExercise(
+          currentTestCode,
+          executionCode,
+          { solutionFileName: files.javaSolutionFileName, testFileName: files.javaTestFileName },
+          level,
+          consoleSink
+        );
+      } else if (useWorker) {
+        // Fresh worker per run. Its promise always resolves (results, timeout,
+        // user-stop, or crash) so we render every outcome uniformly.
+        const run = runExerciseInWorker(currentTestCode, executionCode, level, consoleSink);
+        workerRunRef.current = run;
+        setCanStop(true);
+        result = await run.promise;
+        if (workerRunRef.current === run) {
+          workerRunRef.current = null;
+          setCanStop(false);
+        }
+      } else {
+        result = await runExercise(
+          currentTestCode,
+          executionCode,
+          level,
+          consoleSink,
+          hasStyles ? stylesCode : undefined,
+          learnerFiles
+        );
+      }
       if (cancelled) return;
       setTestResult(result);
       setTestsRunning(false);
@@ -620,13 +647,29 @@ export function Workspace({
     return () => {
       cancelled = true;
       window.clearTimeout(timeout);
+      // A newer run started (or the exercise changed): kill any in-flight worker
+      // so fast typing can't stack workers. `cancelled` above discards its result.
+      if (workerRunRef.current) {
+        workerRunRef.current.terminate("cancel");
+        workerRunRef.current = null;
+        setCanStop(false);
+      }
     };
     // `onConsole` and `onResult` are render-local callbacks; this effect is keyed
     // to the code/test inputs that should actually trigger a fresh run. A learner
     // file edit must also re-run: key on its serialized contents (stable across
     // renders that don't change any learner file).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTestCode, executionCode, hasStyles, stylesCode, level, testNonce, language, learnerFilesSig]);
+  }, [currentTestCode, executionCode, hasStyles, stylesCode, level, testNonce, language, useWorker, learnerFilesSig]);
+
+  // Stop button: kill the in-flight worker now and surface a "stopped" result.
+  const stopRun = () => {
+    const run = workerRunRef.current;
+    if (!run) return;
+    workerRunRef.current = null;
+    setCanStop(false);
+    run.terminate("user"); // resolves run.promise → the awaiting effect renders it
+  };
 
   const submit = () => {
     const completesExercise = level === exercise.levels;
@@ -1171,6 +1214,8 @@ export function Workspace({
       running={testsRunning}
       onRun={() => setTestNonce((n) => n + 1)}
       onOpenTest={openTestAt}
+      canStop={canStop}
+      onStop={stopRun}
     />
   );
   const previewContent = files.previewCode ? (
