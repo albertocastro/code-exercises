@@ -56,6 +56,8 @@ export const CATALOG: CategoryMeta[] = [
       { id: "exercise_17", name: "Deadlock-Free Bank", levels: 4, difficulty: "hard", topic: "Java concurrency: atomic account ops, deadlock-free transfer via lock ordering, keyed guarded waits, and consistent snapshots" },
       { id: "exercise_18", name: "Bounded Async Crawler", levels: 4, difficulty: "medium", topic: "Async concurrency pool: bounded parallelism, input-order results, and fail-fast vs settle semantics" },
       { id: "exercise_19", name: "Parallel Aggregator", levels: 4, difficulty: "medium", topic: "Java parallelism: partitioning CPU work across threads, shared-accumulator reduction, and cooperative cancellation" },
+      { id: "exercise_20", name: "Async Cache", levels: 4, difficulty: "hard", topic: "Cache-aside, single-flight request dedupe, TTL expiry, and stale-while-revalidate" },
+      { id: "exercise_21", name: "Async Primitives", levels: 4, difficulty: "hard", topic: "Hand-rolled Deferred, Semaphore, Mutex, back-pressured AsyncQueue, and combinators" },
     ],
   },
   {
