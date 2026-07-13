@@ -12,6 +12,27 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return ka.every((k) => deepEqual((a as never)[k], (b as never)[k]));
 }
 
+// Subset match used by toMatchObject: `received` matches `expected` if every
+// key present in `expected` matches recursively (nested objects partial-match
+// too). Arrays are compared element-wise with the same subset semantics, but
+// must have equal length (mirrors Jest/Vitest toMatchObject behavior).
+function matchesSubset(received: unknown, expected: unknown): boolean {
+  if (Object.is(received, expected)) return true;
+  if (typeof expected !== "object" || expected === null || typeof received !== "object" || received === null) {
+    return false;
+  }
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(received) || received.length !== expected.length) return false;
+    return expected.every((ev, i) => matchesSubset((received as unknown[])[i], ev));
+  }
+  if (Array.isArray(received)) return false;
+  return Object.keys(expected).every(
+    (k) =>
+      Object.prototype.hasOwnProperty.call(received, k) &&
+      matchesSubset((received as Record<string, unknown>)[k], (expected as Record<string, unknown>)[k])
+  );
+}
+
 function fmt(v: unknown): string {
   if (v instanceof Element) return v.outerHTML.slice(0, 160);
   if (typeof v === "function") return "[function]";
@@ -49,6 +70,12 @@ class Assertion {
   }
   toStrictEqual(expected: unknown) {
     this.toEqual(expected);
+  }
+  toMatchObject(expected: object) {
+    this.check(
+      matchesSubset(this.received, expected),
+      `expected ${fmt(this.received)} to match object subset ${fmt(expected)}`
+    );
   }
   toBeNull() {
     this.check(this.received === null, `expected ${fmt(this.received)} to be null`);
