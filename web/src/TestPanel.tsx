@@ -14,6 +14,8 @@ export function TestPanel({
   running,
   onRun,
   onOpenTest,
+  canStop,
+  onStop,
 }: {
   testCode: string;
   level: number;
@@ -21,6 +23,10 @@ export function TestPanel({
   running: boolean;
   onRun: () => void;
   onOpenTest?: (line?: number) => void;
+  // When a run is executing in the worker it can be killed; the parent wires
+  // these to terminate() so a runaway (infinite loop) can be stopped by hand.
+  canStop?: boolean;
+  onStop?: () => void;
 }) {
   return (
     <div className="tests">
@@ -28,6 +34,11 @@ export function TestPanel({
         <button className="run-btn" title="Re-run tests (⌘/Ctrl+Enter)" onClick={onRun}>
           ↻ Run <span className="run-hint">⌘↵</span>
         </button>
+        {canStop && onStop && (
+          <button className="stop-btn" title="Stop the running tests" onClick={onStop}>
+            ■ Stop
+          </button>
+        )}
         {running && <span className="muted">running…</span>}
         {!running && result && !result.compileError && (
           <>

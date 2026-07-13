@@ -55,7 +55,11 @@ function matchesSubset(received: unknown, expected: unknown): boolean {
 }
 
 function fmt(v: unknown): string {
-  if (v instanceof Element) return v.outerHTML.slice(0, 160);
+  // `Element` is undefined in a Web Worker (no DOM). Guard so this formatter —
+  // which runs on every assertion-failure message, including in the worker-based
+  // leetcode runner — never throws a ReferenceError. Leetcode values are never
+  // Elements, so the guarded branch is simply skipped there.
+  if (typeof Element !== "undefined" && v instanceof Element) return v.outerHTML.slice(0, 160);
   if (typeof v === "function") return "[function]";
   try {
     return JSON.stringify(v);

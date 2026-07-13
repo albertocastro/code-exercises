@@ -4,6 +4,11 @@ import * as JsxRuntime from "react/jsx-runtime";
 import userEvent from "@testing-library/user-event";
 import { rtl } from "./rtl";
 import { transpile } from "./transpile";
+import { evalModule } from "./evalModule";
+
+// Re-exported so existing importers (`./modules`) keep working unchanged while
+// the worker path imports the DOM-free original from `./evalModule` directly.
+export { evalModule };
 
 // The only modules an exercise is allowed to import. They're the app's own
 // bundled copies, so the learner's React shares one instance with RTL. The RTL
@@ -181,19 +186,4 @@ export function makeRequire(
   };
 
   return require;
-}
-
-// Evaluate transpiled CommonJS, injecting require/module/exports plus any extra
-// globals (describe/test/expect/vi/process for test files).
-export function evalModule(
-  transpiled: string,
-  requireFn: (name: string) => unknown,
-  globals: Record<string, unknown> = {}
-): Record<string, unknown> {
-  const module = { exports: {} as Record<string, unknown> };
-  const names = ["require", "module", "exports", ...Object.keys(globals)];
-  const values = [requireFn, module, module.exports, ...Object.values(globals)];
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  new Function(...names, transpiled)(...values);
-  return module.exports;
 }
