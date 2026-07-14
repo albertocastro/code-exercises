@@ -58,6 +58,7 @@ export const CATALOG: CategoryMeta[] = [
       { id: "exercise_19", name: "Parallel Aggregator", levels: 4, difficulty: "medium", topic: "Java parallelism: partitioning CPU work across threads, shared-accumulator reduction, and cooperative cancellation" },
       { id: "exercise_20", name: "Async Cache", levels: 4, difficulty: "hard", topic: "Cache-aside, single-flight request dedupe, TTL expiry, and stale-while-revalidate" },
       { id: "exercise_21", name: "Async Primitives", levels: 4, difficulty: "hard", topic: "Hand-rolled Deferred, Semaphore, Mutex, back-pressured AsyncQueue, and combinators" },
+      { id: "exercise_22", name: "Duplicate File Detector", levels: 4, difficulty: "hard", topic: "Content-hash grouping, size-bucket pre-filter, bounded-parallel async hashing, and collision-safe verification" },
     ],
   },
   {
