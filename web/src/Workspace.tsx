@@ -86,7 +86,14 @@ const RESERVED_FILE_NAMES = new Set([
   "README.md",
   "Main.java",
 ]);
-const ALLOWED_LEARNER_EXTS = [".css", ".ts", ".tsx"];
+// React can import CSS (main-thread runner injects it); leetcode runs in a DOM-free
+// worker where an imported .css is inert, so only TS modules are offered there.
+const REACT_LEARNER_EXTS = [".css", ".ts", ".tsx"];
+const LEETCODE_LEARNER_EXTS = [".ts", ".tsx"];
+
+function allowedLearnerExts(categoryId: string): string[] {
+  return categoryId === "leetcode" ? LEETCODE_LEARNER_EXTS : REACT_LEARNER_EXTS;
+}
 
 function learnerStarter(name: string): string {
   if (name.endsWith(".css")) return `/* ${name} — your styles. Import it: import "./${name}"; */\n`;
@@ -94,14 +101,15 @@ function learnerStarter(name: string): string {
   return `// ${name} — your module. Import it: import { thing } from "./${base}";\n`;
 }
 
-// Validate a proposed learner filename against the current set. Returns an error
-// string to show the learner, or null when the name is acceptable.
-function validateLearnerName(raw: string, existing: string[]): string | null {
+// Validate a proposed learner filename against the current set and the extensions
+// allowed for this exercise category. Returns an error string to show the learner,
+// or null when the name is acceptable.
+function validateLearnerName(raw: string, existing: string[], allowedExts: string[]): string | null {
   const name = raw.trim();
   if (!name) return "Enter a file name.";
   if (name.includes("/") || name.includes("\\")) return "Use a flat name — no folders or slashes.";
-  if (!ALLOWED_LEARNER_EXTS.some((ext) => name.endsWith(ext)))
-    return "File must end in .css, .ts, or .tsx.";
+  if (!allowedExts.some((ext) => name.endsWith(ext)))
+    return `File must end in ${allowedExts.join(", ")}.`;
   if (RESERVED_FILE_NAMES.has(name)) return `"${name}" is a reserved file name.`;
   if (existing.includes(name)) return `"${name}" already exists.`;
   return null;
@@ -201,12 +209,16 @@ export function Workspace({
   const [stylesCode, setStylesCode] = useState(
     () => getDraft(key, "styles") ?? files.stylesCode ?? ""
   );
-  // Learner-created files ({ filename: content }), persisted per exercise. Only
-  // React exercises expose the "+ Add file" affordance (module resolution +
-  // preview live there); leetcode/Java use a different runner path.
-  const supportsLearnerFiles = categoryId === "react";
+  // Learner-created files ({ filename: content }), persisted per exercise. React
+  // exercises resolve them on the main-thread runner (with CSS + preview); leetcode
+  // TypeScript exercises resolve them inside the Web Worker runner (TS modules only,
+  // no DOM/CSS). Persistence is category-level (load once regardless of the Java/TS
+  // toggle); the "+ Add file"/delete affordance is language-aware because Java has
+  // its own runner with no learner-file wiring.
+  const canHaveLearnerFiles = categoryId === "react" || categoryId === "leetcode";
+  const supportsLearnerFiles = canHaveLearnerFiles && language !== "java";
   const [learnerFiles, setLearnerFiles] = useState<Record<string, string>>(() =>
-    supportsLearnerFiles ? getLearnerFiles(key) : {}
+    canHaveLearnerFiles ? getLearnerFiles(key) : {}
   );
   // Stable key over learner-file contents so the test effect and preview only
   // re-run when a learner file actually changes (not on every unrelated render).
@@ -313,7 +325,7 @@ export function Workspace({
     setTestsRunning(true);
     setConsoleEntries([]);
     setActiveFile("solution");
-    setLearnerFiles(supportsLearnerFiles ? getLearnerFiles(key) : {});
+    setLearnerFiles(canHaveLearnerFiles ? getLearnerFiles(key) : {});
     setTab(hasPreview ? "preview" : "tests");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [language, exercise.id]);
@@ -409,12 +421,15 @@ export function Workspace({
     setJavaMainCode(currentMainStarter);
   };
   const addLearnerFile = () => {
-    const raw = window.prompt(
-      "New file name (.css, .ts, or .tsx). Import it from solution.tsx with a same-folder path, e.g. import \"./theme.css\"."
-    );
+    const exts = allowedLearnerExts(categoryId);
+    const promptMsg =
+      categoryId === "leetcode"
+        ? 'New file name (.ts or .tsx). Import it from your solution with a same-folder path, e.g. import { helper } from "./helper".'
+        : 'New file name (.css, .ts, or .tsx). Import it from solution.tsx with a same-folder path, e.g. import "./theme.css".';
+    const raw = window.prompt(promptMsg);
     if (raw === null) return; // cancelled
     const name = raw.trim();
-    const error = validateLearnerName(name, Object.keys(learnerFiles));
+    const error = validateLearnerName(name, Object.keys(learnerFiles), exts);
     if (error) {
       window.alert(error);
       return;
@@ -620,7 +635,13 @@ export function Workspace({
       } else if (useWorker) {
         // Fresh worker per run. Its promise always resolves (results, timeout,
         // user-stop, or crash) so we render every outcome uniformly.
-        const run = runExerciseInWorker(currentTestCode, executionCode, level, consoleSink);
+        const run = runExerciseInWorker(
+          currentTestCode,
+          executionCode,
+          level,
+          consoleSink,
+          learnerFiles
+        );
         workerRunRef.current = run;
         setCanStop(true);
         result = await run.promise;

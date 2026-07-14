@@ -29,6 +29,7 @@ export function runExerciseInWorker(
   solutionCode: string,
   level: number,
   onConsole?: ConsoleSink,
+  learnerFiles?: Record<string, string>,
   timeoutMs: number = RUN_TIMEOUT_MS
 ): WorkerRun {
   const worker = new Worker(new URL("./testWorker.ts", import.meta.url), { type: "module" });
@@ -85,7 +86,7 @@ export function runExerciseInWorker(
 
   // Kick off the run. Handlers + timer are already armed above, so a result or a
   // timeout can win from here on.
-  const request: RunRequest = { testCode, solutionCode, level };
+  const request: RunRequest = { testCode, solutionCode, level, learnerFiles };
   worker.postMessage(request);
 
   return { promise, terminate };
