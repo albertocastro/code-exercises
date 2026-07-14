@@ -13,6 +13,7 @@
 
 import { transpile } from "./transpile";
 import { evalModule } from "./evalModule";
+import { makeLearnerRequire, type LearnerFiles } from "./learnerModules";
 import { createHarness, runTree } from "./testHarness";
 import { expect, makeVi } from "./expectSetup";
 import { makeCapturedConsole } from "./consoleCapture";
@@ -23,16 +24,26 @@ import type { RunRequest, WorkerOutbound } from "./workerProtocol";
 const SELF_IMPORT_RE =
   /(?:from\s+["']|require\(\s*["'])(?:\.\/|\/)solution(?:\.[tj]sx?)?["']/;
 
-// Minimal, DOM-free module resolver for leetcode: the solution is self-contained
-// and the test file's only import is "./solution". Anything else throws the exact
-// same message the main-thread sandbox uses, so error text is unchanged.
-function makeWorkerRequire(locals: Record<string, unknown> = {}): (name: string) => unknown {
-  return (name: string): unknown => {
+// DOM-free module resolver for leetcode. `locals` covers exact specifiers the
+// runner injects (e.g. "./solution"); `learnerFiles` lets the solution or test
+// `import "./helper"` a same-folder file the learner created. Learner .ts/.tsx
+// files are transpiled + evaluated through this same require (with a cache + cycle
+// guard, see makeLearnerRequire). Anything unresolved throws the exact same message
+// the main-thread sandbox uses, so error text is unchanged.
+function makeWorkerRequire(
+  locals: Record<string, unknown> = {},
+  learnerFiles: LearnerFiles = {},
+  moduleGlobals: Record<string, unknown> = {}
+): (name: string) => unknown {
+  const base = (name: string): unknown => {
     if (name in locals) return locals[name];
     // CSS imports are a no-op side effect in the sandbox (leetcode has no styles).
     if (name.endsWith(".css")) return {};
     throw new Error(`Module not available in the exercise sandbox: "${name}"`);
   };
+  // No learner files → keep the original minimal resolver (no extra work/allocs).
+  if (Object.keys(learnerFiles).length === 0) return base;
+  return makeLearnerRequire({ learnerFiles, fallback: base, moduleGlobals });
 }
 
 function post(message: WorkerOutbound) {
@@ -41,6 +52,7 @@ function post(message: WorkerOutbound) {
 
 function runRequest(req: RunRequest) {
   const { testCode, solutionCode, level } = req;
+  const learnerFiles: LearnerFiles = req.learnerFiles ?? {};
 
   // Module-scoped pointer to the running test's name; console lines get stamped
   // with it and streamed live to the parent (same attribution as main thread).
@@ -68,9 +80,11 @@ function runRequest(req: RunRequest) {
 
   let solutionExports: Record<string, unknown>;
   try {
-    solutionExports = evalModule(transpile(solutionCode), makeWorkerRequire(), {
-      console: capturedConsole,
-    });
+    solutionExports = evalModule(
+      transpile(solutionCode),
+      makeWorkerRequire({}, learnerFiles, { console: capturedConsole }),
+      { console: capturedConsole }
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     post({
@@ -84,14 +98,20 @@ function runRequest(req: RunRequest) {
   const proc = { env: { LEVEL: String(level) } };
   const vi = makeVi();
   try {
-    evalModule(transpile(testCode), makeWorkerRequire({ "./solution": solutionExports }), {
-      ...harness.globals,
-      expect,
-      vi,
-      jest: vi, // alias: some exercises are authored with jest.* instead of vi.*
-      process: proc,
-      console: capturedConsole,
-    });
+    evalModule(
+      transpile(testCode),
+      makeWorkerRequire({ "./solution": solutionExports }, learnerFiles, {
+        console: capturedConsole,
+      }),
+      {
+        ...harness.globals,
+        expect,
+        vi,
+        jest: vi, // alias: some exercises are authored with jest.* instead of vi.*
+        process: proc,
+        console: capturedConsole,
+      }
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     post({

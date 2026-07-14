@@ -12,6 +12,10 @@ export interface RunRequest {
   testCode: string;
   solutionCode: string;
   level: number;
+  // Learner-created same-folder files ({ "helper.ts": "..." }) the solution or test
+  // may `import "./helper"`. Plain string map — structured-clone-safe across the
+  // worker boundary. Absent/empty for exercises with no extra files.
+  learnerFiles?: Record<string, string>;
 }
 
 // worker → parent: a captured console line, streamed live as the tests log so the
