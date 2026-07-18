@@ -17,6 +17,7 @@ const ENV_KEYS = [
   "EXERCISE_AGENT_MODE",
   "EXERCISE_AGENT_MODEL",
   "EXERCISE_AGENT_EFFORT",
+  "EXERCISE_AGENT_PROVIDER",
   "CODE_EXERCISES_GATEWAY_URL",
   "AI_GATEWAY_URL",
 ];
@@ -29,6 +30,7 @@ beforeEach(() => {
   process.env.CODE_EXERCISES_GATEWAY_URL = "http://gw.test:9999";
   delete process.env.EXERCISE_AGENT_MODEL;
   delete process.env.EXERCISE_AGENT_EFFORT;
+  delete process.env.EXERCISE_AGENT_PROVIDER;
   delete process.env.AI_GATEWAY_URL;
 });
 
@@ -120,6 +122,60 @@ describe("gateway mode — request shape", () => {
     expect(prompt).toContain(
       `{"score":number,"summary":"string","strengths":["string"],"improvements":["string"],"studyPlan":[{"topic":"string","why":"string"}]`,
     );
+  });
+});
+
+describe("gateway mode — provider selection (codex vs claude)", () => {
+  it("payload provider 'claude' selects the claude provider with the sonnet default model and no codex options", async () => {
+    const calls = stubFetch({ body: { text: GATEWAY_SCORE_TEXT } });
+    await runAgentScore({ ...scorePayload, provider: "claude" });
+    const b = calls[0].parsedBody;
+    expect(b.provider).toBe("claude");
+    expect(b.model).toBe("claude-sonnet-5");
+    expect(b.providerOptions).toBeUndefined();
+  });
+
+  it("EXERCISE_AGENT_PROVIDER=claude is the default when the payload has no provider", async () => {
+    process.env.EXERCISE_AGENT_PROVIDER = "claude";
+    const calls = stubFetch({ body: { text: GATEWAY_SCORE_TEXT } });
+    await runAgentScore(scorePayload);
+    expect(calls[0].parsedBody.provider).toBe("claude");
+    expect(calls[0].parsedBody.model).toBe("claude-sonnet-5");
+  });
+
+  it("payload provider wins over the env default", async () => {
+    process.env.EXERCISE_AGENT_PROVIDER = "claude";
+    const calls = stubFetch({ body: { text: GATEWAY_SCORE_TEXT } });
+    await runAgentScore({ ...scorePayload, provider: "codex" });
+    const b = calls[0].parsedBody;
+    expect(b.provider).toBe("codex");
+    expect(b.model).toBe("gpt-5.4-mini");
+    expect(b.providerOptions).toEqual({ codex: { effort: "low" } });
+  });
+
+  it("an unrecognized payload provider falls back to codex", async () => {
+    const calls = stubFetch({ body: { text: GATEWAY_SCORE_TEXT } });
+    await runAgentScore({ ...scorePayload, provider: "gemini; rm -rf /" });
+    expect(calls[0].parsedBody.provider).toBe("codex");
+  });
+
+  it("EXERCISE_AGENT_MODEL overrides the per-provider default model", async () => {
+    process.env.EXERCISE_AGENT_MODEL = "claude-opus-4-8";
+    const calls = stubFetch({ body: { text: GATEWAY_SCORE_TEXT } });
+    await runAgentScore({ ...scorePayload, provider: "claude" });
+    expect(calls[0].parsedBody.model).toBe("claude-opus-4-8");
+  });
+
+  it("claude is text-only: the screenshot is NOT sent as images[]", async () => {
+    const b64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 9, 9]).toString("base64");
+    const calls = stubFetch({
+      body: {
+        text: JSON.stringify({ verdict: "good", score: 90, summary: "ok", findings: [] }),
+      },
+    });
+    await runAgentPixelPerfect({ ...scorePayload, screenshot: b64, provider: "claude" });
+    expect(calls[0].parsedBody.provider).toBe("claude");
+    expect(calls[0].parsedBody.images).toBeUndefined();
   });
 });
 

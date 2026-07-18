@@ -38,6 +38,7 @@ import { runExercise, type RunResult } from "./runner/testRunner";
 import { runExerciseInWorker, type WorkerRun } from "./runner/workerClient";
 import type { ConsoleEntry, ConsoleSink } from "./runner/consoleCapture";
 import { formatCode } from "./formatCode";
+import { getAiProvider, setAiProvider, AI_PROVIDER_LABELS, type AiProvider } from "./aiProvider";
 import {
   addActionItemToScore,
   clearCodeQualityScore,
@@ -248,6 +249,13 @@ export function Workspace({
   const [hint, setHint] = useState<ComplexityResult | null>(null);
   const [insightsLevel, setInsightsLevel] = useState<number | null>(null);
   const [qualityScores, setQualityScores] = useState<Record<string, QualityScoreState>>({});
+  // Which AI backs the review/score agents; persisted globally via aiProvider.ts.
+  const [aiProvider, setAiProviderState] = useState<AiProvider>(() => getAiProvider());
+  const toggleAiProvider = () => {
+    const next: AiProvider = aiProvider === "codex" ? "claude" : "codex";
+    setAiProvider(next);
+    setAiProviderState(next);
+  };
   const [prReviews, setPrReviews] = useState<Record<string, PrReviewState>>({});
   // Which scope's PR-review modal is open (null = closed).
   const [prReviewScope, setPrReviewScope] = useState<QualityScoreScope | null>(null);
@@ -755,6 +763,7 @@ export function Workspace({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          provider: getAiProvider(),
           categoryId,
           exerciseId: exercise.id,
           level: targetLevel,
@@ -916,6 +925,7 @@ export function Workspace({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          provider: getAiProvider(),
           categoryId,
           exerciseId: exercise.id,
           level: targetLevel,
@@ -1001,6 +1011,7 @@ export function Workspace({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          provider: getAiProvider(),
           categoryId,
           exerciseId: exercise.id,
           level: targetLevel,
@@ -1069,6 +1080,7 @@ export function Workspace({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        provider: getAiProvider(),
         categoryId,
         exerciseId: exercise.id,
         level: targetLevel,
@@ -1465,6 +1477,16 @@ export function Workspace({
 
           <button className="reset" title="Restore previous solution or preview drafts" onClick={() => setHistoryFile("solution")}>
             history
+          </button>
+
+          <button
+            className="reset"
+            title={`AI reviewer: ${AI_PROVIDER_LABELS[aiProvider]} — click to switch to ${
+              AI_PROVIDER_LABELS[aiProvider === "codex" ? "claude" : "codex"]
+            }`}
+            onClick={toggleAiProvider}
+          >
+            AI: {aiProvider === "codex" ? "codex" : "sonnet"}
           </button>
 
           <button className="reset danger" title="Delete draft and progress for this exercise" onClick={resetWholeExercise}>

@@ -729,26 +729,52 @@ function gatewayBaseUrl() {
 
 const GATEWAY_TIMEOUT_MS = 120_000;
 
-async function runAgentViaGateway(prompt, screenshotBase64) {
+// The two AI providers an agent call can run on. "codex" is the historical
+// default; "claude" targets the Claude Code CLI (Sonnet by default). The
+// request payload's `provider` (the UI toggle) wins over the
+// EXERCISE_AGENT_PROVIDER env default; anything unrecognized falls back to
+// codex so a stale/hostile payload can never select an arbitrary provider.
+const AGENT_PROVIDERS = new Set(["codex", "claude"]);
+
+function resolveAgentProvider(p) {
+  const requested = typeof p?.provider === "string" ? p.provider.toLowerCase() : "";
+  if (AGENT_PROVIDERS.has(requested)) return requested;
+  const envDefault = (process.env.EXERCISE_AGENT_PROVIDER || "codex").toLowerCase();
+  return AGENT_PROVIDERS.has(envDefault) ? envDefault : "codex";
+}
+
+// Per-provider default model, shared by the gateway and local paths.
+// EXERCISE_AGENT_MODEL (when set) overrides both, matching historical behavior.
+function agentModel(provider) {
+  return (
+    process.env.EXERCISE_AGENT_MODEL || (provider === "claude" ? "claude-sonnet-5" : "gpt-5.4-mini")
+  );
+}
+
+async function runAgentViaGateway(prompt, screenshotBase64, provider = "codex") {
   const url = gatewayBaseUrl();
-  // Mirror the local codex path: model from EXERCISE_AGENT_MODEL (codex default
-  // gpt-5.4-mini), effort from EXERCISE_AGENT_EFFORT. Effort maps to the
-  // documented `providerOptions.codex.effort` request field.
-  const model = process.env.EXERCISE_AGENT_MODEL || "gpt-5.4-mini";
+  // Mirror the local path: model from EXERCISE_AGENT_MODEL (per-provider default
+  // otherwise), effort from EXERCISE_AGENT_EFFORT. Effort is codex-specific and
+  // maps to the documented `providerOptions.codex.effort` request field; the
+  // claude provider keeps the gateway's own defaults (see ai-gateway
+  // src/providers/claude.ts) so we send no providerOptions for it.
+  const model = agentModel(provider);
   const effort = process.env.EXERCISE_AGENT_EFFORT || "low";
 
   const requestBody = {
-    provider: "codex",
+    provider,
     model,
     prompt,
     clientId: "code-exercises",
-    providerOptions: { codex: { effort } },
     timeoutMs: GATEWAY_TIMEOUT_MS,
   };
+  if (provider === "codex") requestBody.providerOptions = { codex: { effort } };
   // Vision path: a raw base64 PNG (no data-url prefix) → images[]. The gateway
   // reconstructs `-i <tmpfile>` server-side, so the risky `-i … --` argv wiring
-  // lives entirely in the gateway, not here.
-  if (screenshotBase64) requestBody.images = [screenshotBase64];
+  // lives entirely in the gateway, not here. Image input is codex-only — the
+  // gateway's claude adapter has no image plumbing — so the claude provider
+  // degrades to text-only, same as the local claude path.
+  if (screenshotBase64 && provider === "codex") requestBody.images = [screenshotBase64];
 
   // Abort a little after the server-side cap so a wedged connection can't hang
   // the request forever; the gateway enforces its own child-process timeout.
@@ -824,8 +850,10 @@ async function runAgentViaGateway(prompt, screenshotBase64) {
 // a "busy" rejection (queue full) throws straight out of `agentLimiter.run`,
 // before any scratch dir or `codex` process exists.
 function runAgent(p, ext, prompt, outputFile, screenshotBase64) {
+  // Payload `provider` (the UI toggle) > EXERCISE_AGENT_PROVIDER env > codex.
+  const requestedProvider = resolveAgentProvider(p);
   if ((process.env.EXERCISE_AGENT_MODE || "local").toLowerCase() === "gateway") {
-    return runAgentViaGateway(prompt, screenshotBase64);
+    return runAgentViaGateway(prompt, screenshotBase64, requestedProvider);
   }
   return agentLimiter.run(() => {
     const dir = mkdtempSync(path.join(tmpdir(), "exercise-review-"));
@@ -836,13 +864,13 @@ function runAgent(p, ext, prompt, outputFile, screenshotBase64) {
 
     const configuredCmd = process.env.EXERCISE_AGENT_CMD;
     // Provider selector. Precedence: EXERCISE_AGENT_CMD (verbatim override) wins;
-    // otherwise EXERCISE_AGENT_PROVIDER picks "claude" (Claude Code CLI) or the
-    // default "codex". Codex stays the default so existing deploys are unchanged.
-    const provider = (process.env.EXERCISE_AGENT_PROVIDER || "codex").toLowerCase();
-    const useClaude = !configuredCmd && provider === "claude";
+    // otherwise the resolved provider (payload toggle > EXERCISE_AGENT_PROVIDER
+    // env) picks "claude" (Claude Code CLI) or the default "codex". Codex stays
+    // the default so existing deploys are unchanged.
+    const useClaude = !configuredCmd && requestedProvider === "claude";
     // Codex default model is "gpt-5.4-mini"; the claude path needs a Claude model id.
     // Sonnet is a good quality/latency fit for these JSON review tasks.
-    const model = process.env.EXERCISE_AGENT_MODEL || (useClaude ? "claude-sonnet-5" : "gpt-5.4-mini");
+    const model = agentModel(useClaude ? "claude" : "codex");
     const effort = process.env.EXERCISE_AGENT_EFFORT || "low";
 
     // Only the DEFAULT codex path supports the `-i <image>` flag. A custom

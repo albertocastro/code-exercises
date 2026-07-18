@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { fmtTime } from "./useTimer";
+import { getAiProvider } from "./aiProvider";
 import type { LevelStat } from "./progress";
 import {
   clearInsightsChat,
@@ -398,6 +399,7 @@ export function InsightsPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          provider: getAiProvider(),
           categoryId,
           exerciseId,
           level,
