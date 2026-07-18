@@ -26,6 +26,14 @@ function webApiBridge(): Plugin {
 export default defineConfig({
   plugins: [react(), webApiBridge()],
   root: path.resolve(__dirname, "web"),
+  // The IDE runs React Testing Library tests in the browser, and RTL's render()
+  // wraps in act() — which only exists in DEVELOPMENT builds of React. A default
+  // `vite build` would bundle production React and every React exercise test
+  // would fail with "act(...) is not supported in production builds of React".
+  // So pin the bundled NODE_ENV to development even for production builds.
+  define: {
+    "process.env.NODE_ENV": JSON.stringify("development"),
+  },
   // Pre-bundle the heavy deps at startup so entering the workspace doesn't
   // trigger a mid-session re-optimization (which 504s in-flight Monaco chunks).
   optimizeDeps: {
