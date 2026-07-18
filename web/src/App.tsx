@@ -7,6 +7,7 @@ import { fmtTime } from "./useTimer";
 import { getDraft } from "./drafts";
 import { compilePreview } from "./runner/preview";
 import { allCodeQualityScores } from "./insightsChat";
+import { TransferModal } from "./TransferModal";
 
 type View =
   | { kind: "categories" }
@@ -108,6 +109,7 @@ export function App() {
   }
 
   const [view, setView] = useState<View>(() => parseViewFromUrl());
+  const [transferOpen, setTransferOpen] = useState(false);
 
   useEffect(() => {
     const syncView = () => setView(parseViewFromUrl());
@@ -157,8 +159,10 @@ export function App() {
         actions={[
           { label: "Progress", onClick: () => setView({ kind: "progress" }) },
           { label: "Insights", onClick: () => setView({ kind: "insights" }) },
+          { label: "Export / Import", onClick: () => setTransferOpen(true) },
         ]}
       >
+        {transferOpen && <TransferModal onClose={() => setTransferOpen(false)} />}
         <h1>code-exercises</h1>
         <p className="muted">Pick a category.</p>
         <div className="grid">

@@ -2184,3 +2184,34 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 .pp-severity.nit { background: rgba(215, 163, 91, 0.16); color: #e2b877; }
 .pp-severity.issue { background: rgba(209, 105, 105, 0.18); color: #f4a89b; }
 .pp-observation { margin: 0; color: var(--text); font-size: 13px; line-height: 1.5; }
+
+/* ── Export / Import transfer modal ── */
+/* Copy-paste transfer of all localStorage state between browsers (TransferModal).
+   Uses the app's dark tokens; the textarea is monospace since it holds raw JSON. */
+.transfer-backdrop {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center; z-index: 1000;
+}
+.transfer-modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 16px 18px; width: min(680px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px); display: flex; flex-direction: column; gap: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.transfer-head { display: flex; align-items: center; justify-content: space-between; color: var(--text); }
+.transfer-blurb { margin: 0; font-size: 12.5px; line-height: 1.5; }
+.transfer-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.transfer-text {
+  width: 100%; min-height: 220px; resize: vertical;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 10px; font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px; line-height: 1.45;
+}
+.transfer-text:focus { outline: none; border-color: var(--accent-2); }
+.transfer-status { margin: 0; font-size: 12.5px; color: var(--muted); }
+.transfer-status.ok { color: var(--green); }
+.transfer-status.error { color: #f48771; }
+/* "Load file…" is a <label> styled like the .reset buttons; hide its real input. */
+.transfer-file { display: inline-flex; align-items: center; cursor: pointer; }
+.transfer-file input { display: none; }
+.transfer-import { margin-left: auto; }
